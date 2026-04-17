@@ -12,6 +12,7 @@ type Role = 'wfm' | 'agent' | 'manager';
 export default function LoginScreen({ onLogin }: Props) {
   const [role, setRole] = useState<Role>('wfm');
   const [agentId, setAgentId] = useState('');
+  const [wfmPassword, setWfmPassword] = useState('');
   const [systemUser, setSystemUser] = useState('');
   const [managerName, setManagerName] = useState('');
   const [managers, setManagers] = useState<string[]>([]);
@@ -51,6 +52,7 @@ export default function LoginScreen({ onLogin }: Props) {
     try {
       const resp = await api.login({
         role,
+        ...(role === 'wfm' ? { password: wfmPassword } : {}),
         ...(role === 'agent' ? { agentId } : {}),
         ...(role === 'manager' ? { managerName } : {}),
       });
@@ -131,6 +133,19 @@ export default function LoginScreen({ onLogin }: Props) {
           ))}
         </div>
 
+        {role === 'wfm' && (
+          <div className={styles.field}>
+            <label className={styles.label}>WFM Password</label>
+            <input
+              className={styles.input}
+              type="password"
+              value={wfmPassword}
+              onChange={(e) => setWfmPassword(e.target.value)}
+              placeholder="Enter WFM password"
+            />
+          </div>
+        )}
+
         {role === 'agent' && (
           <div className={styles.field}>
             <label className={styles.label}>Agent ID</label>
@@ -176,7 +191,7 @@ export default function LoginScreen({ onLogin }: Props) {
         <button
           className={styles.loginBtn}
           onClick={handleLogin}
-          disabled={loading || (role === 'agent' && !agentId.trim()) || (role === 'manager' && !managerName)}
+          disabled={loading || (role === 'wfm' && !wfmPassword.trim()) || (role === 'agent' && !agentId.trim()) || (role === 'manager' && !managerName)}
         >
           {loading ? 'Logging in...' : 'Login'}
         </button>

@@ -94,6 +94,7 @@ export interface SessionMeta {
 
 export interface LoginRequest {
   role: 'wfm' | 'agent' | 'manager';
+  password?: string;
   agentId?: string;
   managerName?: string;
 }
