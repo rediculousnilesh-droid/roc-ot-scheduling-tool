@@ -34,6 +34,15 @@ def normalize_date_header(header):
         if mon:
             return f"{m.group(3)}-{mon}-{m.group(1).zfill(2)}"
 
+    # D-Mon-YY (e.g., 31-May-26) — 2-digit year
+    m = re.match(r'^(\d{1,2})-([A-Za-z]{3})-(\d{2})$', trimmed)
+    if m:
+        mon = months_map.get(m.group(2).lower())
+        if mon:
+            year = int(m.group(3))
+            year = year + 2000 if year < 100 else year
+            return f"{year}-{mon}-{m.group(1).zfill(2)}"
+
     # D-Mon (e.g., 31-May) — assume current year, adjust if >6 months past
     m = re.match(r'^(\d{1,2})-([A-Za-z]{3})$', trimmed)
     if m:
