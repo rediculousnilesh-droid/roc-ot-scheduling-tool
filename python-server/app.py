@@ -149,58 +149,62 @@ def _merge_heatmap_data(existing, incoming):
 
 @app.route('/api/heatmap', methods=['POST'])
 def upload_heatmap():
-    body = request.get_json(force=True, silent=True) or {}
-    csv_string = body.get('csv')
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        csv_string = body.get('csv')
 
-    if not csv_string or not isinstance(csv_string, str):
-        return jsonify({'error': 'Please upload a valid CSV file.'}), 400
+        if not csv_string or not isinstance(csv_string, str):
+            return jsonify({'error': 'Please upload a valid CSV file.'}), 400
 
-    if not csv_string.strip():
-        return jsonify({'error': 'The uploaded file contains no data rows.'}), 400
+        if not csv_string.strip():
+            return jsonify({'error': 'The uploaded file contains no data rows.'}), 400
 
-    result = parse_heatmap_csv(csv_string)
+        result = parse_heatmap_csv(csv_string)
 
-    if result['errors'] and not result['valid']:
-        return jsonify({'errors': result['errors']}), 400
+        if result['errors'] and not result['valid']:
+            return jsonify({'error': '; '.join(e.get('message', str(e)) for e in result['errors'])}), 400
 
-    if not result['valid']:
-        return jsonify({'error': 'The uploaded file contains no data rows.'}), 400
+        if not result['valid']:
+            return jsonify({'error': 'The uploaded file contains no data rows.'}), 400
 
-    week_start = _get_current_week_start()
-    past_rows = [r for r in result['valid'] if r['date'] < week_start]
-    future_rows = [r for r in result['valid'] if r['date'] >= week_start]
+        week_start = _get_current_week_start()
+        past_rows = [r for r in result['valid'] if r['date'] < week_start]
+        future_rows = [r for r in result['valid'] if r['date'] >= week_start]
 
-    if not future_rows:
+        if not future_rows:
+            return jsonify({
+                'error': f"All {len(past_rows)} rows contain dates before the current week ({week_start}). Only current and future week data can be uploaded.",
+            }), 400
+
+        existing = load_heatmap_data()
+        merged = _merge_heatmap_data(existing, future_rows)
+        save_heatmap_data(merged)
+
+        save_slots([])
+        save_recommendations([])
+        save_revised_heatmap([])
+
+        meta = load_session_meta() or {
+            'createdAt': datetime.utcnow().isoformat() + 'Z',
+            'lastUploadAt': None,
+            'heatmapUploaded': False,
+            'rosterUploaded': False,
+        }
+        meta['heatmapUploaded'] = True
+        meta['lastUploadAt'] = datetime.utcnow().isoformat() + 'Z'
+        save_session_meta(meta)
+
         return jsonify({
-            'error': f"All {len(past_rows)} rows contain dates before the current week ({week_start}). Only current and future week data can be uploaded.",
-        }), 400
-
-    existing = load_heatmap_data()
-    merged = _merge_heatmap_data(existing, future_rows)
-    save_heatmap_data(merged)
-
-    # Clear generated slots/recommendations since heatmap data changed
-    save_slots([])
-    save_recommendations([])
-    save_revised_heatmap([])
-
-    meta = load_session_meta() or {
-        'createdAt': datetime.utcnow().isoformat() + 'Z',
-        'lastUploadAt': None,
-        'heatmapUploaded': False,
-        'rosterUploaded': False,
-    }
-    meta['heatmapUploaded'] = True
-    meta['lastUploadAt'] = datetime.utcnow().isoformat() + 'Z'
-    save_session_meta(meta)
-
-    return jsonify({
-        'success': True,
-        'rowCount': len(future_rows),
-        'totalRows': len(merged),
-        'skippedPastRows': len(past_rows),
-        'errors': result['errors'],
-    })
+            'success': True,
+            'rowCount': len(future_rows),
+            'totalRows': len(merged),
+            'skippedPastRows': len(past_rows),
+            'errors': result['errors'],
+        })
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Server error: {str(ex)}'}), 500
 
 
 @app.route('/api/heatmap', methods=['GET'])
@@ -237,66 +241,70 @@ def _merge_roster_data(existing, incoming):
 
 @app.route('/api/roster', methods=['POST'])
 def upload_roster():
-    body = request.get_json(force=True, silent=True) or {}
-    csv_string = body.get('csv')
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        csv_string = body.get('csv')
 
-    if not csv_string or not isinstance(csv_string, str):
-        return jsonify({'error': 'Please upload a valid CSV file.'}), 400
+        if not csv_string or not isinstance(csv_string, str):
+            return jsonify({'error': 'Please upload a valid CSV file.'}), 400
 
-    if not csv_string.strip():
-        return jsonify({'error': 'The uploaded file contains no data rows.'}), 400
+        if not csv_string.strip():
+            return jsonify({'error': 'The uploaded file contains no data rows.'}), 400
 
-    parsed = parse_shift_csv(csv_string)
-    roster = parsed['roster']
-    errors = parsed['errors']
+        parsed = parse_shift_csv(csv_string)
+        roster = parsed['roster']
+        errors = parsed['errors']
 
-    if errors and not roster['entries']:
-        return jsonify({'errors': errors}), 400
+        if errors and not roster['entries']:
+            return jsonify({'error': '; '.join(e.get('message', str(e)) for e in errors)}), 400
 
-    week_start = _get_current_week_start()
-    past_entries = [e for e in roster['entries'] if e['date'] < week_start]
-    future_entries = [e for e in roster['entries'] if e['date'] >= week_start]
+        week_start = _get_current_week_start()
+        past_entries = [e for e in roster['entries'] if e['date'] < week_start]
+        future_entries = [e for e in roster['entries'] if e['date'] >= week_start]
 
-    if not future_entries:
+        if not future_entries:
+            return jsonify({
+                'error': f"All {len(past_entries)} entries contain dates before the current week ({week_start}). Only current and future week data can be uploaded.",
+            }), 400
+
+        filtered_roster = {
+            'entries': future_entries,
+            'agents': sorted(set(e['agent'] for e in future_entries)),
+            'managers': sorted(set(e['manager'] for e in future_entries if e.get('manager'))),
+            'programs': sorted(set(e['program'] for e in future_entries if e.get('program'))),
+            'lobbies': sorted(set(e['lobby'] for e in future_entries if e.get('lobby'))),
+            'dates': sorted(set(e['date'] for e in future_entries)),
+        }
+
+        existing = load_roster_data()
+        merged = _merge_roster_data(existing, filtered_roster)
+        save_roster_data(merged)
+
+        save_slots([])
+        save_recommendations([])
+        save_revised_heatmap([])
+
+        meta = load_session_meta() or {
+            'createdAt': datetime.utcnow().isoformat() + 'Z',
+            'lastUploadAt': None,
+            'heatmapUploaded': False,
+            'rosterUploaded': False,
+        }
+        meta['rosterUploaded'] = True
+        meta['lastUploadAt'] = datetime.utcnow().isoformat() + 'Z'
+        save_session_meta(meta)
+
         return jsonify({
-            'error': f"All {len(past_entries)} entries contain dates before the current week ({week_start}). Only current and future week data can be uploaded.",
-        }), 400
-
-    filtered_roster = {
-        'entries': future_entries,
-        'agents': sorted(set(e['agent'] for e in future_entries)),
-        'managers': sorted(set(e['manager'] for e in future_entries if e.get('manager'))),
-        'programs': sorted(set(e['program'] for e in future_entries if e.get('program'))),
-        'lobbies': sorted(set(e['lobby'] for e in future_entries if e.get('lobby'))),
-        'dates': sorted(set(e['date'] for e in future_entries)),
-    }
-
-    existing = load_roster_data()
-    merged = _merge_roster_data(existing, filtered_roster)
-    save_roster_data(merged)
-
-    # Clear generated slots/recommendations since roster data changed
-    save_slots([])
-    save_recommendations([])
-    save_revised_heatmap([])
-
-    meta = load_session_meta() or {
-        'createdAt': datetime.utcnow().isoformat() + 'Z',
-        'lastUploadAt': None,
-        'heatmapUploaded': False,
-        'rosterUploaded': False,
-    }
-    meta['rosterUploaded'] = True
-    meta['lastUploadAt'] = datetime.utcnow().isoformat() + 'Z'
-    save_session_meta(meta)
-
-    return jsonify({
-        'success': True,
-        'entryCount': len(future_entries),
-        'totalEntries': len(merged['entries']),
-        'skippedPastEntries': len(past_entries),
-        'errors': errors,
-    })
+            'success': True,
+            'entryCount': len(future_entries),
+            'totalEntries': len(merged['entries']),
+            'skippedPastEntries': len(past_entries),
+            'errors': errors,
+        })
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Server error: {str(ex)}'}), 500
 
 
 @app.route('/api/roster', methods=['GET'])
@@ -317,52 +325,55 @@ def get_roster():
 
 @app.route('/api/generate', methods=['POST'])
 def generate_slots():
-    body = request.get_json(force=True, silent=True) or {}
-    program = body.get('program')
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        program = body.get('program')
 
-    if not program:
-        return jsonify({'error': 'Program is required.'}), 400
+        if not program:
+            return jsonify({'error': 'Program is required.'}), 400
 
-    heatmap_data = load_heatmap_data()
-    if not heatmap_data:
-        return jsonify({'error': 'Heatmap data must be uploaded before generating slots.'}), 400
+        heatmap_data = load_heatmap_data()
+        if not heatmap_data:
+            return jsonify({'error': 'Heatmap data must be uploaded before generating slots.'}), 400
 
-    roster = load_roster_data()
-    if not roster:
-        return jsonify({'error': 'Shift roster must be uploaded before generating slots.'}), 400
+        roster = load_roster_data()
+        if not roster:
+            return jsonify({'error': 'Shift roster must be uploaded before generating slots.'}), 400
 
-    week_start = _get_current_week_start()
-    current_heatmap = [r for r in heatmap_data if r['date'] >= week_start]
-    if not current_heatmap:
-        return jsonify({'error': 'No heatmap data available for the current or future weeks. Cannot generate OT slots for past weeks.'}), 400
+        week_start = _get_current_week_start()
+        current_heatmap = [r for r in heatmap_data if r['date'] >= week_start]
+        if not current_heatmap:
+            return jsonify({'error': 'No heatmap data available for the current or future weeks.'}), 400
 
-    program_shifts = [e for e in roster['entries'] if e['program'] == program and e['date'] >= week_start]
-    if not program_shifts:
-        return jsonify({'error': f'No shift roster data for {program} in the current or future weeks.'}), 400
+        program_shifts = [e for e in roster['entries'] if e['program'] == program and e['date'] >= week_start]
+        if not program_shifts:
+            return jsonify({'error': f'No shift roster data for {program} in the current or future weeks.'}), 400
 
-    result = generate_auto_slots(program_shifts, current_heatmap, -2, program)
+        result = generate_auto_slots(program_shifts, current_heatmap, -2, program)
 
-    # Remove existing slots and recommendations for this program, then add new ones
-    existing_slots = load_slots()
-    other_slots = [s for s in existing_slots if s['program'] != program]
-    all_slots = other_slots + result['slots']
-    save_slots(all_slots)
+        existing_slots = load_slots()
+        other_slots = [s for s in existing_slots if s['program'] != program]
+        all_slots = other_slots + result['slots']
+        save_slots(all_slots)
 
-    existing_recs = load_recommendations()
-    other_recs = [r for r in existing_recs if r['program'] != program]
-    all_recs = other_recs + result['recommendations']
-    save_recommendations(all_recs)
+        existing_recs = load_recommendations()
+        other_recs = [r for r in existing_recs if r['program'] != program]
+        all_recs = other_recs + result['recommendations']
+        save_recommendations(all_recs)
 
-    # Compute revised heatmap
-    revised = compute_revised_heatmap(heatmap_data, all_recs)
-    save_revised_heatmap(revised)
+        revised = compute_revised_heatmap(heatmap_data, all_recs)
+        save_revised_heatmap(revised)
 
-    return jsonify({
-        'success': True,
-        'generated': len(result['slots']),
-        'summary': result['summary'],
-        'deficitBlocks': result['deficitBlocks'],
-    })
+        return jsonify({
+            'success': True,
+            'generated': len(result['slots']),
+            'summary': result['summary'],
+            'deficitBlocks': result['deficitBlocks'],
+        })
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Server error: {str(ex)}'}), 500
 
 
 # ─── Slots Routes ──────────────────────────────────────────────────────────────
