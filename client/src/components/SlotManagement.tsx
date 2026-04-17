@@ -12,6 +12,7 @@ interface Props {
   heatmap?: HeatmapRow[];
   programs: string[];
   lobbies: string[];
+  onRefresh?: () => void;
 }
 
 /** Derive shift name from OT window using roster */
@@ -150,7 +151,7 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
   );
 }
 
-export default function SlotManagement({ slots, shifts, programs, lobbies, heatmap }: Props) {
+export default function SlotManagement({ slots, shifts, programs, lobbies, heatmap, onRefresh }: Props) {
   const [selectedProgram, setSelectedProgram] = useState('');
   const [selectedLobby, setSelectedLobby] = useState('');
   const [selectedWeek, setSelectedWeek] = useState('');
@@ -254,6 +255,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
       const res = await api.generateSlots(selectedProgram);
       showMsg(`Generated ${res.generated} slots for ${selectedProgram}`, 'success');
       setGenerateCount((c) => c + 1);
+      if (onRefresh) onRefresh();
     } catch (err: unknown) {
       showMsg(err instanceof Error ? err.message : 'Generation failed', 'error');
     } finally { setLoading(false); }
@@ -263,13 +265,14 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
     try {
       await api.releaseSlots(ids);
       showMsg(`Released ${ids.length} slots`, 'success');
+      if (onRefresh) onRefresh();
     } catch (err: unknown) {
       showMsg(err instanceof Error ? err.message : 'Release failed', 'error');
     }
   };
 
   const handleCancel = async (id: string) => {
-    try { await api.cancelSlot(id); }
+    try { await api.cancelSlot(id); if (onRefresh) onRefresh(); }
     catch (err: unknown) { showMsg(err instanceof Error ? err.message : 'Cancel failed', 'error'); }
   };
 

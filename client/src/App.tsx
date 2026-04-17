@@ -196,7 +196,7 @@ export default function App() {
             )}
 
             {activeTab === 'slots' && (
-              <SlotManagement slots={slots} shifts={shiftEntries} programs={programs} lobbies={lobbies} heatmap={heatmap} />
+              <SlotManagement slots={slots} shifts={shiftEntries} programs={programs} lobbies={lobbies} heatmap={heatmap} onRefresh={fetchAll} />
             )}
 
             {activeTab === 'dashboard' && (
