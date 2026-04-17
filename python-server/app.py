@@ -520,6 +520,12 @@ def return_slot_route():
 
     try:
         slots = load_slots()
+        # Debug: find the slot and log its status
+        target = next((s for s in slots if s['id'] == slot_id), None)
+        if not target:
+            return jsonify({'error': f'Slot {slot_id} not found.'}), 400
+        if target['status'] != 'Filled':
+            return jsonify({'error': f'Slot status is "{target["status"]}", not "Filled". Cannot return.'}), 400
         slots = return_slot(slots, slot_id)
         save_slots(slots)
         return jsonify({'success': True})
