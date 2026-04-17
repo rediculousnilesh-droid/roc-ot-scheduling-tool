@@ -8,17 +8,67 @@ import re
 
 
 def normalize_date_header(header):
-    """Normalizes date headers like '4/15/2026' or '04/15/2026' to 'YYYY-MM-DD'."""
+    """Normalizes date headers like '4/15/2026', '04/15/2026', '2026-04-15', '31-May', '31-May-2026' to 'YYYY-MM-DD'."""
     trimmed = header.strip()
 
+    # YYYY-MM-DD
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', trimmed):
+        return trimmed
+
+    # M/D/YYYY or MM/DD/YYYY
     m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', trimmed)
     if m:
         month = m.group(1).zfill(2)
         day = m.group(2).zfill(2)
         return f"{m.group(3)}-{month}-{day}"
 
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', trimmed):
-        return trimmed
+    # D-Mon-YYYY (e.g., 31-May-2026)
+    months_map = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12',
+    }
+    m = re.match(r'^(\d{1,2})-([A-Za-z]{3})-(\d{4})$', trimmed)
+    if m:
+        mon = months_map.get(m.group(2).lower())
+        if mon:
+            return f"{m.group(3)}-{mon}-{m.group(1).zfill(2)}"
+
+    # D-Mon (e.g., 31-May) — assume current year, adjust if >6 months past
+    m = re.match(r'^(\d{1,2})-([A-Za-z]{3})$', trimmed)
+    if m:
+        mon = months_map.get(m.group(2).lower())
+        if mon:
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            year = now.year
+            day_val = m.group(1).zfill(2)
+            try:
+                candidate = datetime(year, int(mon), int(day_val))
+                six_months_ago = now - timedelta(days=180)
+                if candidate < six_months_ago:
+                    year += 1
+            except ValueError:
+                pass
+            return f"{year}-{mon}-{day_val}"
+
+    # Mon-DD (e.g., May-31)
+    m = re.match(r'^([A-Za-z]{3})-(\d{1,2})$', trimmed)
+    if m:
+        mon = months_map.get(m.group(1).lower())
+        if mon:
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            year = now.year
+            day_val = m.group(2).zfill(2)
+            try:
+                candidate = datetime(year, int(mon), int(day_val))
+                six_months_ago = now - timedelta(days=180)
+                if candidate < six_months_ago:
+                    year += 1
+            except ValueError:
+                pass
+            return f"{year}-{mon}-{day_val}"
 
     return None
 
