@@ -147,6 +147,114 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
           </tbody>
         </table>
       </div>
+
+      {/* OT Garnered Table */}
+      {(() => {
+        const filledMap = new Map<string, number>();
+        const releasedMap = new Map<string, number>();
+        for (const s of slots) {
+          const shift = deriveShift(s.otType, s.timeWindow, s.date, shifts);
+          const key = `${s.otType}|${shift}|${s.date}`;
+          if (s.status === 'Filled') filledMap.set(key, (filledMap.get(key) ?? 0) + 1);
+          if (s.status === 'Released' || s.status === 'Filled') releasedMap.set(key, (releasedMap.get(key) ?? 0) + 1);
+        }
+        let lastOT2 = '';
+        return (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, marginBottom: 6 }}>
+              <strong style={{ fontSize: 14, color: '#166534' }}>OT Garnered (Picked Up)</strong>
+              <button style={{ padding: '4px 10px', fontSize: 11, background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: 4, cursor: 'pointer' }}
+                onClick={() => {
+                  const headers = ['OT Type', 'Shift', ...dates.map(fmtDate)];
+                  const csvRows = rows.map(r => [r.otType, r.shift, ...dates.map(d => String(filledMap.get(`${r.otType}|${r.shift}|${d}`) ?? ''))]);
+                  downloadCSV(headers, csvRows, 'ot_garnered.csv');
+                }}>⬇ Download CSV</button>
+            </div>
+            <div style={{ overflowX: 'auto', border: '1px solid #bbf7d0', borderRadius: 6 }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12, whiteSpace: 'nowrap' }}>
+                <thead>
+                  <tr style={{ background: '#f0fdf4' }}>
+                    <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #86efac', fontWeight: 700 }}>OT Type</th>
+                    <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #86efac', fontWeight: 700 }}>Shift</th>
+                    {dates.map(d => <th key={d} style={{ padding: '6px 10px', textAlign: 'center', borderBottom: '2px solid #86efac', fontWeight: 700 }}>{fmtDate(d)}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => {
+                    const showOT = r.otType !== lastOT2;
+                    if (showOT) lastOT2 = r.otType;
+                    const rowSpan = showOT ? otTypeRowCounts.get(r.otType) ?? 1 : 0;
+                    return (
+                      <tr key={i} style={{ borderBottom: '1px solid #dcfce7' }}>
+                        {showOT && <td rowSpan={rowSpan} style={{ padding: '5px 10px', fontWeight: 600, background: '#f0fdf4', borderRight: '1px solid #dcfce7', verticalAlign: 'top' }}>{r.otType}</td>}
+                        <td style={{ padding: '5px 10px', fontWeight: 500 }}>{r.shift}</td>
+                        {dates.map(d => {
+                          const count = filledMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                          return <td key={d} style={{ padding: '5px 10px', textAlign: 'center', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? '#166534' : '#cbd5e1' }}>{count > 0 ? count : ''}</td>;
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Fill Rate % Table */}
+            {(() => {
+              let lastOT3 = '';
+              return (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, marginBottom: 6 }}>
+                    <strong style={{ fontSize: 14, color: '#9333ea' }}>Fill Rate % by Type, Shift & Date</strong>
+                    <button style={{ padding: '4px 10px', fontSize: 11, background: '#faf5ff', color: '#7c3aed', border: '1px solid #d8b4fe', borderRadius: 4, cursor: 'pointer' }}
+                      onClick={() => {
+                        const headers = ['OT Type', 'Shift', ...dates.map(fmtDate)];
+                        const csvRows = rows.map(r => [r.otType, r.shift, ...dates.map(d => {
+                          const filled = filledMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                          const released = releasedMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                          return released > 0 ? `${Math.round((filled / released) * 100)}%` : '';
+                        })]);
+                        downloadCSV(headers, csvRows, 'ot_fill_rate_detail.csv');
+                      }}>⬇ Download CSV</button>
+                  </div>
+                  <div style={{ overflowX: 'auto', border: '1px solid #d8b4fe', borderRadius: 6 }}>
+                    <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12, whiteSpace: 'nowrap' }}>
+                      <thead>
+                        <tr style={{ background: '#faf5ff' }}>
+                          <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #c084fc', fontWeight: 700 }}>OT Type</th>
+                          <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #c084fc', fontWeight: 700 }}>Shift</th>
+                          {dates.map(d => <th key={d} style={{ padding: '6px 10px', textAlign: 'center', borderBottom: '2px solid #c084fc', fontWeight: 700 }}>{fmtDate(d)}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, i) => {
+                          const showOT = r.otType !== lastOT3;
+                          if (showOT) lastOT3 = r.otType;
+                          const rowSpan = showOT ? otTypeRowCounts.get(r.otType) ?? 1 : 0;
+                          return (
+                            <tr key={i} style={{ borderBottom: '1px solid #f3e8ff' }}>
+                              {showOT && <td rowSpan={rowSpan} style={{ padding: '5px 10px', fontWeight: 600, background: '#faf5ff', borderRight: '1px solid #f3e8ff', verticalAlign: 'top' }}>{r.otType}</td>}
+                              <td style={{ padding: '5px 10px', fontWeight: 500 }}>{r.shift}</td>
+                              {dates.map(d => {
+                                const filled = filledMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                                const released = releasedMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                                const rate = released > 0 ? Math.round((filled / released) * 100) : -1;
+                                const color = rate < 0 ? '#cbd5e1' : rate >= 80 ? '#166534' : rate >= 50 ? '#ca8a04' : '#dc2626';
+                                const bg = rate < 0 ? 'transparent' : rate >= 80 ? '#f0fdf4' : rate >= 50 ? '#fefce8' : '#fef2f2';
+                                return <td key={d} style={{ padding: '5px 10px', textAlign: 'center', fontWeight: rate >= 0 ? 700 : 400, color, background: bg, borderRadius: 2 }}>{rate >= 0 ? `${rate}%` : ''}</td>;
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              );
+            })()}
+          </>
+        );
+      })()}
     </div>
   );
 }
