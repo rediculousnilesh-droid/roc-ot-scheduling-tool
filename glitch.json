@@ -1,0 +1,9 @@
+{
+  "install": "cd client && npm install && npm run build && cd ../server && npm install",
+  "start": "cd server && npx tsx src/index.ts",
+  "watch": {
+    "restart": {
+      "include": ["server/src/"]
+    }
+  }
+}
