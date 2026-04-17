@@ -78,6 +78,20 @@ export default function ManagerDashboard({ slots, fillRates, managerPrograms, ma
     downloadCSV(headers, rows, 'agent_breakdown.csv');
   };
 
+  const exportPickupReport = () => {
+    const headers = ['Agent', 'Program', 'Lobby', 'Date', 'OT Type', 'OT Time Window', 'Status', 'Pickup Date/Time', 'Opted for OT'];
+    const rows: string[][] = [];
+    for (const s of scopedSlots) {
+      if (s.status === 'Cancelled') continue;
+      const agent = s.filledByAgentName || s.assignedAgentName || '';
+      const pickupTime = s.filledAt ? new Date(s.filledAt).toLocaleString() : '';
+      const opted = s.status === 'Filled' ? 'Yes' : 'No';
+      rows.push([agent, s.program, s.lobby, s.date, s.otType, s.timeWindow, s.status, pickupTime, opted]);
+    }
+    rows.sort((a, b) => a[0].localeCompare(b[0]) || a[3].localeCompare(b[3]));
+    downloadCSV(headers, rows, 'ot_pickup_report.csv');
+  };
+
   const otTypes = ['1hr Pre Shift OT', '1hr Post Shift OT', '2hr Pre Shift OT', '2hr Post Shift OT', 'Full Day OT'];
 
   return (
@@ -96,6 +110,11 @@ export default function ManagerDashboard({ slots, fillRates, managerPrograms, ma
       </div>
 
       <SummaryCards slots={scopedSlots} fillRates={scopedFillRates} />
+
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <button style={{ padding: '0.4rem 0.75rem', fontSize: '0.78rem', border: '1px solid #cbd5e1', borderRadius: '6px', background: '#fff', cursor: 'pointer', fontWeight: 500, color: '#475569' }} onClick={exportPickupReport}>📥 OT Pickup Report</button>
+        <button style={{ padding: '0.4rem 0.75rem', fontSize: '0.78rem', border: '1px solid #cbd5e1', borderRadius: '6px', background: '#fff', cursor: 'pointer', fontWeight: 500, color: '#475569' }} onClick={exportAgentBreakdown}>📥 Agent Breakdown</button>
+      </div>
 
       <div className={styles.chartGrid}>
         <FillRateBarChart fillRates={scopedFillRates} />

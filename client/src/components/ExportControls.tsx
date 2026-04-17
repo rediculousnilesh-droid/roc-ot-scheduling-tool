@@ -16,6 +16,34 @@ interface Props {
 }
 
 export default function ExportControls({ slots, recommendations, fillRates, heatmap, revised, chartRefs }: Props) {
+  const exportPickupReport = () => {
+    const headers = ['Agent', 'Program', 'Lobby', 'Manager', 'Date', 'Shift', 'OT Type', 'OT Time Window', 'Status', 'Pickup Date/Time', 'Opted for OT'];
+    const rows: string[][] = [];
+
+    // Build agent-manager-shift lookup from recommendations
+    const agentInfo = new Map<string, { manager: string; shift: string }>();
+    for (const r of recommendations) {
+      agentInfo.set(`${r.agent}|${r.date}`, { manager: r.manager, shift: r.shift });
+    }
+
+    for (const s of slots) {
+      if (s.status === 'Cancelled') continue;
+      const agent = s.filledByAgentName || s.assignedAgentName || '';
+      const info = agentInfo.get(`${agent}|${s.date}`) || { manager: '', shift: '' };
+      const pickupTime = s.filledAt ? new Date(s.filledAt).toLocaleString() : '';
+      const opted = s.status === 'Filled' ? 'Yes' : 'No';
+
+      rows.push([
+        agent, s.program, s.lobby, info.manager, s.date, info.shift,
+        s.otType, s.timeWindow, s.status, pickupTime, opted,
+      ]);
+    }
+
+    // Sort: by program, then agent, then date
+    rows.sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]) || a[4].localeCompare(b[4]));
+    downloadCSV(headers, rows, 'ot_pickup_report.csv');
+  };
+
   const exportPivot = () => {
     const headers = ['Date', 'Program', 'Lobby', 'Agent', 'Manager', 'Shift', 'OT Type', 'Time Window', 'Deficit Block'];
     const rows = recommendations.map((r) => [
@@ -62,6 +90,7 @@ export default function ExportControls({ slots, recommendations, fillRates, heat
 
   return (
     <div className={styles.container}>
+      <button className={styles.btn} onClick={exportPickupReport}>📥 OT Pickup Report</button>
       <button className={styles.btn} onClick={exportPivot}>📥 Pivot Table</button>
       <button className={styles.btn} onClick={exportSlots}>📥 Slots</button>
       <button className={styles.btn} onClick={exportFillRates}>📥 Fill Rates</button>
