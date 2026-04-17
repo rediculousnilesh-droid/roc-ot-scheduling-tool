@@ -11,7 +11,7 @@ import type {
   ValidationError,
 } from '../types';
 
-const BASE = '/api';
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem('token');
