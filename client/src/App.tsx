@@ -222,6 +222,7 @@ export default function App() {
               agentId={user.agentId || ''}
               agentName={user.name}
               shiftEntries={shiftEntries}
+              onRefresh={fetchAll}
             />
             <MyPickups slots={slots} agentId={user.agentId || ''} />
           </>

@@ -8,6 +8,7 @@ interface Props {
   agentId: string;
   agentName: string;
   shiftEntries?: ShiftEntry[];
+  onRefresh?: () => void;
 }
 
 function fmtDate(d: string): string {
@@ -26,7 +27,7 @@ interface SlotGroup {
   firstAvailableId: string | null;
 }
 
-export default function AvailableSlots({ slots, agentId, agentName, shiftEntries }: Props) {
+export default function AvailableSlots({ slots, agentId, agentName, shiftEntries, onRefresh }: Props) {
   const [message, setMessage] = useState('');
   const [msgType, setMsgType] = useState<'success' | 'error'>('success');
 
@@ -79,6 +80,7 @@ export default function AvailableSlots({ slots, agentId, agentName, shiftEntries
     try {
       await api.pickupSlot(slotId, agentId, agentName);
       showMsg('✓ Slot picked up successfully', 'success');
+      if (onRefresh) onRefresh();
     } catch (err: unknown) {
       showMsg(err instanceof Error ? err.message : 'Pickup failed', 'error');
     }
@@ -93,6 +95,7 @@ export default function AvailableSlots({ slots, agentId, agentName, shiftEntries
           msg += ` (${res.skipped.length} skipped due to rules)`;
         }
         showMsg(msg, 'success');
+        if (onRefresh) onRefresh();
       } else {
         showMsg('No eligible slots to pick up', 'error');
       }
@@ -105,6 +108,7 @@ export default function AvailableSlots({ slots, agentId, agentName, shiftEntries
     try {
       await api.returnSlot(slotId);
       showMsg('✓ Slot returned', 'success');
+      if (onRefresh) onRefresh();
     } catch (err: unknown) {
       showMsg(err instanceof Error ? err.message : 'Return failed', 'error');
     }
