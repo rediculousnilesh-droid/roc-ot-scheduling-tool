@@ -144,6 +144,14 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
                 </tr>
               );
             })}
+            <tr style={{ borderTop: '2px solid #cbd5e1', background: '#f1f5f9' }}>
+              <td colSpan={2} style={{ padding: '6px 10px', fontWeight: 700 }}>Total</td>
+              {dates.map(d => {
+                let total = 0;
+                rows.forEach(r => { total += countMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0; });
+                return <td key={d} style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color: '#1e293b' }}>{total > 0 ? total : ''}</td>;
+              })}
+            </tr>
           </tbody>
         </table>
       </div>
@@ -195,6 +203,14 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
                       </tr>
                     );
                   })}
+                  <tr style={{ borderTop: '2px solid #86efac', background: '#f0fdf4' }}>
+                    <td colSpan={2} style={{ padding: '6px 10px', fontWeight: 700, color: '#166534' }}>Total</td>
+                    {dates.map(d => {
+                      let total = 0;
+                      rows.forEach(r => { total += filledMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0; });
+                      return <td key={d} style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color: '#166534' }}>{total > 0 ? total : ''}</td>;
+                    })}
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -246,6 +262,19 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
                             </tr>
                           );
                         })}
+                        <tr style={{ borderTop: '2px solid #c084fc', background: '#faf5ff' }}>
+                          <td colSpan={2} style={{ padding: '6px 10px', fontWeight: 700, color: '#7c3aed' }}>Total</td>
+                          {dates.map(d => {
+                            let totalFilled = 0, totalReleased = 0;
+                            rows.forEach(r => {
+                              totalFilled += filledMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                              totalReleased += releasedMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                            });
+                            const rate = totalReleased > 0 ? Math.round((totalFilled / totalReleased) * 100) : -1;
+                            const color = rate < 0 ? '#cbd5e1' : rate >= 80 ? '#166534' : rate >= 50 ? '#ca8a04' : '#dc2626';
+                            return <td key={d} style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color }}>{rate >= 0 ? `${rate}%` : ''}</td>;
+                          })}
+                        </tr>
                       </tbody>
                     </table>
                   </div>
