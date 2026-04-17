@@ -1,6 +1,6 @@
 import { useRef, useState, useMemo } from 'react';
 import type { Chart as ChartJS } from 'chart.js';
-import type { OTSlot, HeatmapRow, AllFillRates, OTRecommendation } from '../types';
+import type { OTSlot, HeatmapRow, AllFillRates, OTRecommendation, ShiftEntry } from '../types';
 import SummaryCards from './SummaryCards';
 import FillRateBarChart from './FillRateBarChart';
 import ManagerBarChart from './ManagerBarChart';
@@ -20,6 +20,7 @@ interface Props {
   programs: string[];
   managers: string[];
   lobbies: string[];
+  shifts?: ShiftEntry[];
 }
 
 /** Get the Sunday that starts the week containing the given date */
@@ -59,6 +60,7 @@ export default function Dashboard({
   programs,
   managers,
   lobbies,
+  shifts,
 }: Props) {
   const [filterProgram, setFilterProgram] = useState('');
   const [filterManager, setFilterManager] = useState('');
@@ -206,6 +208,7 @@ export default function Dashboard({
             fillRates={fillRates}
             heatmap={heatmap}
             revised={revised}
+            shifts={shifts}
             chartRefs={{
               fillRateBar: fillRateBarRef.current,
               managerBar: managerBarRef.current,

@@ -1,4 +1,4 @@
-import type { OTSlot, HeatmapRow, OTRecommendation, AllFillRates } from '../types';
+import type { OTSlot, HeatmapRow, OTRecommendation, AllFillRates, ShiftEntry } from '../types';
 import { downloadCSV, exportChartAsPNG } from '../modules/csvDownload';
 import styles from './ExportControls.module.css';
 
@@ -8,6 +8,7 @@ interface Props {
   fillRates: AllFillRates | null;
   heatmap?: HeatmapRow[];
   revised?: HeatmapRow[];
+  shifts?: ShiftEntry[];
   chartRefs?: {
     fillRateBar?: { toBase64Image: () => string } | null;
     managerBar?: { toBase64Image: () => string } | null;
@@ -15,21 +16,36 @@ interface Props {
   };
 }
 
-export default function ExportControls({ slots, recommendations, fillRates, heatmap, revised, chartRefs }: Props) {
+export default function ExportControls({ slots, recommendations, fillRates, heatmap, revised, shifts, chartRefs }: Props) {
   const exportPickupReport = () => {
     const headers = ['Agent', 'Program', 'Lobby', 'Manager', 'Date', 'Shift', 'OT Type', 'OT Time Window', 'Status', 'Pickup Date/Time', 'Opted for OT'];
     const rows: string[][] = [];
 
-    // Build agent-manager-shift lookup from recommendations
-    const agentInfo = new Map<string, { manager: string; shift: string }>();
+    // Build agent lookup from roster shifts
+    const agentShiftMap = new Map<string, { manager: string; shift: string }>();
+    if (shifts) {
+      for (const e of shifts) {
+        const key = `${e.agent.toLowerCase()}|${e.date}`;
+        if (!e.isWeeklyOff && e.shiftStart && e.shiftEnd) {
+          agentShiftMap.set(key, { manager: e.manager, shift: `${e.shiftStart}-${e.shiftEnd}` });
+        } else {
+          agentShiftMap.set(key, { manager: e.manager, shift: e.isWeeklyOff ? 'WO' : '' });
+        }
+      }
+    }
+    // Fallback: also check recommendations
     for (const r of recommendations) {
-      agentInfo.set(`${r.agent}|${r.date}`, { manager: r.manager, shift: r.shift });
+      const key = `${r.agent.toLowerCase()}|${r.date}`;
+      if (!agentShiftMap.has(key)) {
+        agentShiftMap.set(key, { manager: r.manager, shift: r.shift });
+      }
     }
 
     for (const s of slots) {
       if (s.status === 'Cancelled') continue;
       const agent = s.filledByAgentName || s.assignedAgentName || '';
-      const info = agentInfo.get(`${agent}|${s.date}`) || { manager: '', shift: '' };
+      const key = `${agent.toLowerCase()}|${s.date}`;
+      const info = agentShiftMap.get(key) || { manager: '', shift: '' };
       const pickupTime = s.filledAt ? new Date(s.filledAt).toLocaleString() : '';
       const opted = s.status === 'Filled' ? 'Yes' : 'No';
 
@@ -39,7 +55,6 @@ export default function ExportControls({ slots, recommendations, fillRates, heat
       ]);
     }
 
-    // Sort: by program, then agent, then date
     rows.sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]) || a[4].localeCompare(b[4]));
     downloadCSV(headers, rows, 'ot_pickup_report.csv');
   };

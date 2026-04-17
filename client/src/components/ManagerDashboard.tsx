@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { OTSlot, AllFillRates } from '../types';
+import type { OTSlot, AllFillRates, ShiftEntry } from '../types';
 import SummaryCards from './SummaryCards';
 import FillRateBarChart from './FillRateBarChart';
 import { downloadCSV } from '../modules/csvDownload';
@@ -10,9 +10,10 @@ interface Props {
   fillRates: AllFillRates | null;
   managerPrograms: string[];
   managerName: string;
+  shifts?: ShiftEntry[];
 }
 
-export default function ManagerDashboard({ slots, fillRates, managerPrograms, managerName }: Props) {
+export default function ManagerDashboard({ slots, fillRates, managerPrograms, managerName, shifts }: Props) {
   const [filterProgram, setFilterProgram] = useState('');
   const [filterOtType, setFilterOtType] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -79,16 +80,32 @@ export default function ManagerDashboard({ slots, fillRates, managerPrograms, ma
   };
 
   const exportPickupReport = () => {
-    const headers = ['Agent', 'Program', 'Lobby', 'Date', 'OT Type', 'OT Time Window', 'Status', 'Pickup Date/Time', 'Opted for OT'];
+    const headers = ['Agent', 'Program', 'Lobby', 'Manager', 'Date', 'Shift', 'OT Type', 'OT Time Window', 'Status', 'Pickup Date/Time', 'Opted for OT'];
     const rows: string[][] = [];
+
+    // Build agent lookup from roster shifts
+    const agentShiftMap = new Map<string, { manager: string; shift: string }>();
+    if (shifts) {
+      for (const e of shifts) {
+        const key = `${e.agent.toLowerCase()}|${e.date}`;
+        if (!e.isWeeklyOff && e.shiftStart && e.shiftEnd) {
+          agentShiftMap.set(key, { manager: e.manager, shift: `${e.shiftStart}-${e.shiftEnd}` });
+        } else {
+          agentShiftMap.set(key, { manager: e.manager, shift: e.isWeeklyOff ? 'WO' : '' });
+        }
+      }
+    }
+
     for (const s of scopedSlots) {
       if (s.status === 'Cancelled') continue;
       const agent = s.filledByAgentName || s.assignedAgentName || '';
+      const key = `${agent.toLowerCase()}|${s.date}`;
+      const info = agentShiftMap.get(key) || { manager: managerName, shift: '' };
       const pickupTime = s.filledAt ? new Date(s.filledAt).toLocaleString() : '';
       const opted = s.status === 'Filled' ? 'Yes' : 'No';
-      rows.push([agent, s.program, s.lobby, s.date, s.otType, s.timeWindow, s.status, pickupTime, opted]);
+      rows.push([agent, s.program, s.lobby, info.manager, s.date, info.shift, s.otType, s.timeWindow, s.status, pickupTime, opted]);
     }
-    rows.sort((a, b) => a[0].localeCompare(b[0]) || a[3].localeCompare(b[3]));
+    rows.sort((a, b) => a[0].localeCompare(b[0]) || a[4].localeCompare(b[4]));
     downloadCSV(headers, rows, 'ot_pickup_report.csv');
   };
 

@@ -209,6 +209,7 @@ export default function App() {
                 programs={programs}
                 managers={managers}
                 lobbies={lobbies}
+                shifts={shiftEntries}
               />
             )}
           </>
@@ -235,6 +236,7 @@ export default function App() {
             fillRates={fillRates}
             managerPrograms={user.programs || []}
             managerName={user.name}
+            shifts={shiftEntries}
           />
         )}
       </div>
