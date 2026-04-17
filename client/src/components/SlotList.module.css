@@ -1,0 +1,63 @@
+.container {
+  overflow: auto;
+  max-height: 400px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+.table th,
+.table td {
+  border: 1px solid #ddd;
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table th {
+  background: #f5f5f5;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.table th:hover {
+  background: #e8e8e8;
+}
+
+.groupHeader {
+  background: #eef3fa;
+  font-weight: 600;
+}
+
+.statusCreated { color: #666; }
+.statusReleased { color: #1565c0; }
+.statusFilled { color: #2e7d32; }
+.statusCancelled { color: #b71c1c; text-decoration: line-through; }
+
+.actionBtn {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+  margin-right: 4px;
+}
+
+.actionBtn:hover {
+  background: #f0f0f0;
+}
+
+.releaseBtn { border-color: #1565c0; color: #1565c0; }
+.cancelBtn { border-color: #b71c1c; color: #b71c1c; }
+.pickupBtn { border-color: #2e7d32; color: #2e7d32; }
+.returnBtn { border-color: #e65100; color: #e65100; }
