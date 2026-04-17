@@ -40,6 +40,12 @@ export default function App() {
   // WFM tabs
   const [activeTab, setActiveTab] = useState<'uploads' | 'slots' | 'dashboard'>('uploads');
 
+  // Refresh data when switching tabs (needed when WebSocket isn't available)
+  const handleTabChange = (tab: 'uploads' | 'slots' | 'dashboard') => {
+    setActiveTab(tab);
+    fetchAll();
+  };
+
   const fetchAll = useCallback(async () => {
     try {
       const [hm, roster, slotsRes, fr] = await Promise.all([
@@ -164,19 +170,19 @@ export default function App() {
             <div className={styles.tabs}>
               <button
                 className={`${styles.tab} ${activeTab === 'uploads' ? styles.tabActive : ''}`}
-                onClick={() => setActiveTab('uploads')}
+                onClick={() => handleTabChange('uploads')}
               >
                 Uploads
               </button>
               <button
                 className={`${styles.tab} ${activeTab === 'slots' ? styles.tabActive : ''}`}
-                onClick={() => setActiveTab('slots')}
+                onClick={() => handleTabChange('slots')}
               >
                 Slot Management
               </button>
               <button
                 className={`${styles.tab} ${activeTab === 'dashboard' ? styles.tabActive : ''}`}
-                onClick={() => setActiveTab('dashboard')}
+                onClick={() => handleTabChange('dashboard')}
               >
                 Dashboard
               </button>

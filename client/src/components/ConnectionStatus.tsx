@@ -12,6 +12,9 @@ const labels: Record<ConnectionState, string> = {
 };
 
 export default function ConnectionStatus({ status }: Props) {
+  // Don't show reconnecting/disconnected status — WebSocket may not be available (e.g., PythonAnywhere)
+  if (status !== 'connected') return null;
+
   return (
     <span className={`${styles.indicator} ${styles[status]}`}>
       <span className={styles.dot} />
