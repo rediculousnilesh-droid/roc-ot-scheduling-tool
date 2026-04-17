@@ -389,7 +389,12 @@ def get_slots():
         if not roster:
             return jsonify({'slots': []})
         eligible = get_eligible_slots_for_agent(slots, agent_id, roster)
-        return jsonify({'slots': eligible})
+        # Also include slots already picked up by this agent
+        my_filled = [s for s in slots if s['status'] == 'Filled' and s.get('filledByAgentId') == agent_id]
+        # Merge without duplicates
+        eligible_ids = set(s['id'] for s in eligible)
+        combined = eligible + [s for s in my_filled if s['id'] not in eligible_ids]
+        return jsonify({'slots': combined})
 
     return jsonify({'slots': slots})
 

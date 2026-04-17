@@ -30,7 +30,11 @@ export function createSlotsRouter(io: SocketIOServer): Router {
         return;
       }
       const eligible = getEligibleSlotsForAgent(slots, agentId, roster);
-      res.json({ slots: eligible });
+      // Also include slots already picked up by this agent
+      const myFilled = slots.filter((s) => s.status === 'Filled' && s.filledByAgentId === agentId);
+      const eligibleIds = new Set(eligible.map((s) => s.id));
+      const combined = [...eligible, ...myFilled.filter((s) => !eligibleIds.has(s.id))];
+      res.json({ slots: combined });
       return;
     }
 
