@@ -471,113 +471,63 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [generateCount, setGenerateCount] = useState(0);
   const [threshold, setThreshold] = useState(-2);
 
-  // Compute demand-based revised heatmap (adds recommended OT headcount back per interval)
+  // Compute demand-based revised heatmap — adds exactly enough OT to cover deficit in covered intervals
   const demandRevisedHeatmap = useMemo(() => {
     if (!heatmap?.length || !shifts?.length || !selectedProgram) return [];
 
-    // Build interval deficit map
-    const hmByDateInterval = new Map<string, number>();
-    for (const r of heatmap) {
-      if (r.program !== selectedProgram) continue;
-      const key = `${r.date}|${r.intervalStartTime}`;
-      hmByDateInterval.set(key, (hmByDateInterval.get(key) ?? 0) + r.overUnderValue);
-    }
-
-    // Get unique shift patterns
+    // Get unique shift patterns for this program
     const shiftPatterns = new Set<string>();
     for (const s of shifts) {
       if (s.program !== selectedProgram || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
       shiftPatterns.add(`${s.shiftStart}|${s.shiftEnd}`);
     }
 
+    // Build set of intervals covered by any OT window
     const dates = [...new Set(heatmap.filter(r => r.program === selectedProgram).map(r => r.date))];
-
-    // For each date, calculate how many OT headcount to add per interval
-    const addMap = new Map<string, number>();
+    const coveredIntervals = new Set<string>();
 
     for (const date of dates) {
       for (const sp of shiftPatterns) {
         const [startStr, endStr] = sp.split('|');
         const ssi = intervalIdx(startStr);
         const sei = intervalIdx(endStr);
-
-        // Pre shift window: intervals before shift start
-        const preStart = Math.max(ssi - 4, 0);
-        let preMaxDeficit = 0;
-        for (let i = preStart; i < ssi; i++) {
+        // Pre shift: 4 intervals before shift
+        for (let i = Math.max(ssi - 4, 0); i < ssi; i++) {
           const h = String(Math.floor(i / 2)).padStart(2, '0');
           const m = i % 2 === 0 ? '00' : '30';
-          const val = hmByDateInterval.get(`${date}|${h}:${m}`) ?? 0;
-          if (val < 0) preMaxDeficit = Math.max(preMaxDeficit, Math.abs(val));
+          coveredIntervals.add(`${date}|${h}:${m}`);
         }
-        if (preMaxDeficit > 0) {
-          for (let i = preStart; i < ssi; i++) {
-            const h = String(Math.floor(i / 2)).padStart(2, '0');
-            const m = i % 2 === 0 ? '00' : '30';
-            const key = `${date}|${h}:${m}`;
-            addMap.set(key, Math.max(addMap.get(key) ?? 0, preMaxDeficit));
-          }
-        }
-
-        // Post shift window: intervals after shift end
-        const postEnd = Math.min(sei + 4, 48);
-        let postMaxDeficit = 0;
-        for (let i = sei; i < postEnd; i++) {
+        // Post shift: 4 intervals after shift
+        for (let i = sei; i < Math.min(sei + 4, 48); i++) {
           const h = String(Math.floor(i / 2)).padStart(2, '0');
           const m = i % 2 === 0 ? '00' : '30';
-          const val = hmByDateInterval.get(`${date}|${h}:${m}`) ?? 0;
-          if (val < 0) postMaxDeficit = Math.max(postMaxDeficit, Math.abs(val));
-        }
-        if (postMaxDeficit > 0) {
-          for (let i = sei; i < postEnd; i++) {
-            const h = String(Math.floor(i / 2)).padStart(2, '0');
-            const m = i % 2 === 0 ? '00' : '30';
-            const key = `${date}|${h}:${m}`;
-            addMap.set(key, Math.max(addMap.get(key) ?? 0, postMaxDeficit));
-          }
+          coveredIntervals.add(`${date}|${h}:${m}`);
         }
       }
-
-      // Full day: for mid-day intervals with 4+ consecutive deficit
+      // Full day: all intervals with 4+ consecutive deficit
       let consecCount = 0;
-      let blockIntervals: number[] = [];
+      const blockIntervals: string[] = [];
       for (let i = 0; i < 48; i++) {
         const h = String(Math.floor(i / 2)).padStart(2, '0');
         const m = i % 2 === 0 ? '00' : '30';
-        const val = hmByDateInterval.get(`${date}|${h}:${m}`) ?? 0;
-        if (val < -2) {
-          consecCount++;
-          blockIntervals.push(i);
-        } else {
-          if (consecCount >= 4) {
-            for (const bi of blockIntervals) {
-              const bh = String(Math.floor(bi / 2)).padStart(2, '0');
-              const bm = bi % 2 === 0 ? '00' : '30';
-              const key = `${date}|${bh}:${bm}`;
-              const defVal = Math.abs(hmByDateInterval.get(key) ?? 0);
-              addMap.set(key, Math.max(addMap.get(key) ?? 0, defVal));
-            }
-          }
-          consecCount = 0;
-          blockIntervals = [];
+        const key = `${date}|${h}:${m}`;
+        const val = heatmap.filter(r => r.date === date && r.program === selectedProgram && r.intervalStartTime === `${h}:${m}`).reduce((sum, r) => sum + r.overUnderValue, 0);
+        if (val < -2) { consecCount++; blockIntervals.push(key); }
+        else {
+          if (consecCount >= 4) blockIntervals.forEach(k => coveredIntervals.add(k));
+          consecCount = 0; blockIntervals.length = 0;
         }
       }
-      if (consecCount >= 4) {
-        for (const bi of blockIntervals) {
-          const bh = String(Math.floor(bi / 2)).padStart(2, '0');
-          const bm = bi % 2 === 0 ? '00' : '30';
-          const key = `${date}|${bh}:${bm}`;
-          const defVal = Math.abs(hmByDateInterval.get(key) ?? 0);
-          addMap.set(key, Math.max(addMap.get(key) ?? 0, defVal));
-        }
-      }
+      if (consecCount >= 4) blockIntervals.forEach(k => coveredIntervals.add(k));
     }
 
-    // Apply additions to heatmap
+    // For covered intervals with deficit, bring to 0
     return heatmap.map(r => {
       const key = `${r.date}|${r.intervalStartTime}`;
-      const add = addMap.get(key) ?? 0;
-      return { ...r, overUnderValue: r.overUnderValue + add };
+      if (r.program === selectedProgram && coveredIntervals.has(key) && r.overUnderValue < 0) {
+        return { ...r, overUnderValue: 0 };
+      }
+      return r;
     });
   }, [heatmap, shifts, selectedProgram]);
 
