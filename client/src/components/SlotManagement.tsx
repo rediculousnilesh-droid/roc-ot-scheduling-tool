@@ -13,6 +13,10 @@ interface Props {
   programs: string[];
   lobbies: string[];
   onRefresh?: () => void;
+  initialProgram?: string;
+  initialLobby?: string;
+  initialWeek?: string;
+  onSelectionChange?: (program: string, lobby: string, week: string) => void;
 }
 
 /** Derive shift name from OT window using roster */
@@ -454,10 +458,10 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
   );
 }
 
-export default function SlotManagement({ slots, shifts, programs, lobbies, heatmap, onRefresh }: Props) {
-  const [selectedProgram, setSelectedProgram] = useState('');
-  const [selectedLobby, setSelectedLobby] = useState('');
-  const [selectedWeek, setSelectedWeek] = useState('');
+export default function SlotManagement({ slots, shifts, programs, lobbies, heatmap, onRefresh, initialProgram, initialLobby, initialWeek, onSelectionChange }: Props) {
+  const [selectedProgram, setSelectedProgram] = useState(initialProgram || '');
+  const [selectedLobby, setSelectedLobby] = useState(initialLobby || '');
+  const [selectedWeek, setSelectedWeek] = useState(initialWeek || '');
   const [message, setMessage] = useState('');
   const [msgType, setMsgType] = useState<'success' | 'error'>('success');
   const [loading, setLoading] = useState(false);
@@ -483,14 +487,17 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   // Reset lobby when program changes and lobby is no longer valid
   const handleProgramChange = (prog: string) => {
     setSelectedProgram(prog);
+    let newLobby = selectedLobby;
     if (selectedLobby) {
       const newLobbies = prog
         ? [...new Set(shifts.filter(s => s.program === prog && s.lobby).map(s => s.lobby))].sort()
         : lobbies;
       if (!newLobbies.includes(selectedLobby)) {
         setSelectedLobby('');
+        newLobby = '';
       }
     }
+    if (onSelectionChange) onSelectionChange(prog, newLobby, selectedWeek);
   };
 
   /**
@@ -602,12 +609,12 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
           {programs.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
         {filteredLobbies.length > 0 && (
-          <select value={selectedLobby} onChange={(e) => setSelectedLobby(e.target.value)}>
+          <select value={selectedLobby} onChange={(e) => { setSelectedLobby(e.target.value); if (onSelectionChange) onSelectionChange(selectedProgram, e.target.value, selectedWeek); }}>
             <option value="">All Lobbies</option>
             {filteredLobbies.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         )}
-        <select value={selectedWeek} onChange={(e) => setSelectedWeek(e.target.value)}>
+        <select value={selectedWeek} onChange={(e) => { setSelectedWeek(e.target.value); if (onSelectionChange) onSelectionChange(selectedProgram, selectedLobby, e.target.value); }}>
           <option value="">Select Week</option>
           {weeks.map((w) => (
             <option key={w.key} value={w.key}>Week {w.weekNum} ({w.label})</option>

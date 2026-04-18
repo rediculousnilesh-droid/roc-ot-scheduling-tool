@@ -40,6 +40,11 @@ export default function App() {
   // WFM tabs
   const [activeTab, setActiveTab] = useState<'uploads' | 'slots' | 'dashboard'>('uploads');
 
+  // Persistent slot management selections (survive tab switches)
+  const [slotMgmtProgram, setSlotMgmtProgram] = useState('');
+  const [slotMgmtLobby, setSlotMgmtLobby] = useState('');
+  const [slotMgmtWeek, setSlotMgmtWeek] = useState('');
+
   // Refresh data when switching tabs (needed when WebSocket isn't available)
   const handleTabChange = (tab: 'uploads' | 'slots' | 'dashboard') => {
     setActiveTab(tab);
@@ -196,7 +201,11 @@ export default function App() {
             )}
 
             {activeTab === 'slots' && (
-              <SlotManagement slots={slots} shifts={shiftEntries} programs={programs} lobbies={lobbies} heatmap={heatmap} onRefresh={fetchAll} />
+              <SlotManagement
+                slots={slots} shifts={shiftEntries} programs={programs} lobbies={lobbies} heatmap={heatmap} onRefresh={fetchAll}
+                initialProgram={slotMgmtProgram} initialLobby={slotMgmtLobby} initialWeek={slotMgmtWeek}
+                onSelectionChange={(p, l, w) => { setSlotMgmtProgram(p); setSlotMgmtLobby(l); setSlotMgmtWeek(w); }}
+              />
             )}
 
             {activeTab === 'dashboard' && (
