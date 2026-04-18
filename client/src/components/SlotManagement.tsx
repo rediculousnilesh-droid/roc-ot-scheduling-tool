@@ -471,6 +471,61 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [generateCount, setGenerateCount] = useState(0);
   const [threshold, setThreshold] = useState(-2);
 
+  // Compute demand-based revised heatmap (adds OT demand headcount back, irrespective of actual agents)
+  const demandRevisedHeatmap = useMemo(() => {
+    if (!heatmap?.length || !shifts?.length || !selectedProgram) return [];
+    const hmMap = new Map<string, number>();
+    for (const r of heatmap) {
+      const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
+      hmMap.set(key, r.overUnderValue);
+    }
+    // For each shift pattern, add +1 to pre/post intervals that have deficit
+    const shiftPatterns = new Set<string>();
+    for (const s of shifts) {
+      if (s.program !== selectedProgram || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
+      shiftPatterns.add(`${s.shiftStart}|${s.shiftEnd}`);
+    }
+    const dates = [...new Set(heatmap.filter(r => r.program === selectedProgram).map(r => r.date))];
+    for (const date of dates) {
+      for (const sp of shiftPatterns) {
+        const [startStr, endStr] = sp.split('|');
+        const ssi = intervalIdx(startStr);
+        const sei = intervalIdx(endStr);
+        // Pre shift: 4 intervals before shift
+        for (let i = Math.max(ssi - 4, 0); i < ssi; i++) {
+          const h = String(Math.floor(i / 2)).padStart(2, '0');
+          const m = i % 2 === 0 ? '00' : '30';
+          const interval = `${h}:${m}`;
+          // Find matching heatmap rows for this date+interval
+          for (const r of heatmap) {
+            if (r.date === date && r.program === selectedProgram && r.intervalStartTime === interval) {
+              const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
+              const val = hmMap.get(key) ?? r.overUnderValue;
+              if (val < 0) hmMap.set(key, val + 1);
+            }
+          }
+        }
+        // Post shift: 4 intervals after shift
+        for (let i = sei; i < Math.min(sei + 4, 48); i++) {
+          const h = String(Math.floor(i / 2)).padStart(2, '0');
+          const m = i % 2 === 0 ? '00' : '30';
+          const interval = `${h}:${m}`;
+          for (const r of heatmap) {
+            if (r.date === date && r.program === selectedProgram && r.intervalStartTime === interval) {
+              const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
+              const val = hmMap.get(key) ?? r.overUnderValue;
+              if (val < 0) hmMap.set(key, val + 1);
+            }
+          }
+        }
+      }
+    }
+    return heatmap.map(r => {
+      const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
+      return { ...r, overUnderValue: hmMap.get(key) ?? r.overUnderValue };
+    });
+  }, [heatmap, shifts, selectedProgram]);
+
   const showMsg = (text: string, type: 'success' | 'error') => {
     setMessage(text); setMsgType(type);
     setTimeout(() => setMessage(''), 4000);
@@ -649,10 +704,10 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
           {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} />}
           <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
           {heatmap && heatmap.length > 0 && (
-            <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '1rem', border: '1px solid #e2e8f0' }}>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.6rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.4rem', color: '#1e293b' }}>Heatmap Comparison</div>
+            <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.3rem', color: '#1e293b' }}>Heatmap Comparison</div>
               <ThresholdConfig value={threshold} onChange={setThreshold} />
-              <FillRateHeatmap original={heatmap} revised={revised || []} programs={programs} lobbies={lobbies} threshold={threshold} />
+              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} threshold={threshold} />
             </div>
           )}
           {filteredSlots.length === 0 && (
