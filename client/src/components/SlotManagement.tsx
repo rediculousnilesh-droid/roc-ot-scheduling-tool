@@ -142,27 +142,35 @@ function OTDemandTable({ heatmap, shifts, program, animKey, tolerance }: { heatm
         }
       }
 
-      // Full Day OT: check for 4+ consecutive deficit intervals below tolerance
-      let consecDeficit = 0;
-      let maxConsec = 0;
-      let midDeficitTotal = 0;
-      let midDeficitCount = 0;
-      for (let i = 0; i < 48; i++) {
-        const val = intervals.get(i) ?? 0;
-        if (val < tol) {
-          consecDeficit++;
-          midDeficitTotal += Math.abs(val - tol);
-          midDeficitCount++;
-          if (consecDeficit > maxConsec) maxConsec = consecDeficit;
-        } else {
-          consecDeficit = 0;
+      // Full Day OT: for each shift pattern, check if there are 4+ consecutive
+      // deficit intervals below tolerance during that shift window.
+      // Show the actual shift pattern (e.g., "07:00-16:00") instead of "Full Day"
+      for (const sp of shiftPatterns) {
+        const [startStr, endStr] = sp.split('-');
+        const ssi = intervalIdx(startStr);
+        const sei = intervalIdx(endStr);
+
+        let consecDeficit = 0;
+        let maxConsec = 0;
+        let midDeficitTotal = 0;
+        let midDeficitCount = 0;
+        for (let i = ssi; i < sei; i++) {
+          const val = intervals.get(i) ?? 0;
+          if (val < tol) {
+            consecDeficit++;
+            midDeficitTotal += Math.abs(val - tol);
+            midDeficitCount++;
+            if (consecDeficit > maxConsec) maxConsec = consecDeficit;
+          } else {
+            consecDeficit = 0;
+          }
         }
-      }
-      if (maxConsec >= 4) {
-        const key = `Full Day OT|Full Day|${date}`;
-        demandMap.set(key, midDeficitCount > 0 ? Math.ceil(midDeficitTotal / midDeficitCount) : 1);
-        if (!rowSet.has('Full Day OT')) rowSet.set('Full Day OT', new Set());
-        rowSet.get('Full Day OT')!.add('Full Day');
+        if (maxConsec >= 4) {
+          const key = `Full Day OT|${sp}|${date}`;
+          demandMap.set(key, midDeficitCount > 0 ? Math.ceil(midDeficitTotal / midDeficitCount) : 1);
+          if (!rowSet.has('Full Day OT')) rowSet.set('Full Day OT', new Set());
+          rowSet.get('Full Day OT')!.add(sp);
+        }
       }
     }
 
