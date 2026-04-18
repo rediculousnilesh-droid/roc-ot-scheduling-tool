@@ -6,7 +6,7 @@ import base64, json, os, sys, urllib.request, urllib.error
 
 REPO_NAME = "roc-ot-scheduling-tool"
 BRANCH = "main"
-SKIP_DIRS = {'node_modules', '.git', 'dist', 'data', '__pycache__'}
+SKIP_DIRS = {'node_modules', '.git', 'data', '__pycache__'}
 SKIP_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.svg'}
 
 def read_token():

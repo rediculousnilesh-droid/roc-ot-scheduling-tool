@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { generateAutoSlots } from './autoSlotGenerator.js';
+import { computeDemand } from './demandCalculator.js';
 import type { HeatmapRow, ShiftEntry } from '../types.js';
+
+/** Helper: compute demand windows then generate slots */
+function generateWithDemand(shifts: ShiftEntry[], heatmap: HeatmapRow[], program: string) {
+  const demandResult = computeDemand({ heatmapData: heatmap, shifts, program, tolerance: -2 });
+  return generateAutoSlots(shifts, demandResult.demandWindows, program);
+}
 
 describe('autoSlotGenerator', () => {
   it('should generate slots for deficit blocks', () => {
@@ -16,7 +23,7 @@ describe('autoSlotGenerator', () => {
       { agent: 'A1', program: 'P1', lobby: '', manager: 'M1', date: '2026-04-15', shiftStart: '07:00', shiftEnd: '16:00', isWeeklyOff: false },
     ];
 
-    const result = generateAutoSlots(shifts, heatmap, -2, 'P1');
+    const result = generateWithDemand(shifts, heatmap, 'P1');
     expect(result.deficitBlocks.length).toBeGreaterThan(0);
     expect(result.slots.length).toBeGreaterThan(0);
     // Should generate pre-shift OT since deficit is before shift start
@@ -35,7 +42,7 @@ describe('autoSlotGenerator', () => {
       { agent: 'A1', program: 'P1', lobby: '', manager: 'M1', date: '2026-04-14', shiftStart: '07:00', shiftEnd: '16:00', isWeeklyOff: false },
     ];
 
-    const result = generateAutoSlots(shifts, heatmap, -2, 'P1');
+    const result = generateWithDemand(shifts, heatmap, 'P1');
     expect(result.slots.some((s) => s.otType === 'Full Day OT')).toBe(true);
   });
 
@@ -49,7 +56,7 @@ describe('autoSlotGenerator', () => {
       { agent: 'A1', program: 'P1', lobby: '', manager: 'M1', date: '2026-04-15', shiftStart: '07:00', shiftEnd: '16:00', isWeeklyOff: false },
     ];
 
-    const result = generateAutoSlots(shifts, heatmap, -2, 'P1');
+    const result = generateWithDemand(shifts, heatmap, 'P1');
     expect(result.deficitBlocks).toHaveLength(0);
     expect(result.slots).toHaveLength(0);
   });
@@ -65,7 +72,7 @@ describe('autoSlotGenerator', () => {
       { agent: 'A1', program: 'P1', lobby: '', manager: 'M1', date: '2026-04-15', shiftStart: '07:00', shiftEnd: '16:00', isWeeklyOff: false },
     ];
 
-    const result = generateAutoSlots(shifts, heatmap, -2, 'P1');
+    const result = generateWithDemand(shifts, heatmap, 'P1');
     for (const slot of result.slots) {
       expect(slot.status).toBe('Created');
       expect(slot.assignedAgentId).not.toBeNull();
@@ -83,7 +90,7 @@ describe('autoSlotGenerator', () => {
       { agent: 'A1', program: 'P1', lobby: '', manager: 'M1', date: '2026-04-15', shiftStart: '07:00', shiftEnd: '16:00', isWeeklyOff: false },
     ];
 
-    const result = generateAutoSlots(shifts, heatmap, -2, 'P1');
+    const result = generateWithDemand(shifts, heatmap, 'P1');
     expect(result.recommendations.length).toBe(result.slots.length);
     for (const rec of result.recommendations) {
       expect(rec.date).toBeTruthy();
@@ -110,7 +117,7 @@ describe('autoSlotGenerator', () => {
       { agent: 'A1', program: 'P1', lobby: '', manager: 'M1', date: '2026-04-14', shiftStart: '07:00', shiftEnd: '16:00', isWeeklyOff: false },
     ];
 
-    const result = generateAutoSlots(shifts, heatmap, -2, 'P1');
+    const result = generateWithDemand(shifts, heatmap, 'P1');
     const fullDaySlots = result.slots.filter((s) => s.otType === 'Full Day OT' && s.assignedAgentId === 'A1');
     expect(fullDaySlots.length).toBeLessThanOrEqual(1);
   });

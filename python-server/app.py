@@ -14,10 +14,10 @@ from flask_cors import CORS
 from modules.heatmap_parser import parse_heatmap_csv
 from modules.shift_parser import parse_shift_csv
 from modules.auto_slot_generator import generate_auto_slots
+from modules.demand_calculator import compute_demand
 from modules.access_control import validate_agent_pickup, get_eligible_slots_for_agent, get_manager_programs
 from modules.slot_manager import release_slots, cancel_slot, pickup_slot, return_slot
 from modules.fill_rate_calculator import calculate_all_fill_rates
-from modules.revised_heatmap import compute_revised_heatmap
 from modules.export_service import serialize_slots_to_csv
 
 from storage.json_file_store import (
@@ -35,6 +35,8 @@ CORS(app)
 
 # Serve client static files
 CLIENT_DIST = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'client', 'dist'))
+
+WFM_PASSWORD = 'ROCWFM@101'
 
 
 def _get_system_username():
@@ -65,6 +67,9 @@ def auth_login():
         return jsonify({'success': False, 'error': 'Role is required.'}), 400
 
     if role == 'wfm':
+        password = body.get('password', '')
+        if password != WFM_PASSWORD:
+            return jsonify({'success': False, 'error': 'Invalid WFM password.'}), 401
         return jsonify({
             'success': True,
             'token': str(uuid.uuid4()),
@@ -349,26 +354,35 @@ def generate_slots():
         if not program_shifts:
             return jsonify({'error': f'No shift roster data for {program} in the current or future weeks.'}), 400
 
-        result = generate_auto_slots(program_shifts, current_heatmap, -2, program)
+        # Extract tolerance from request body (default -2)
+        tolerance = body.get('tolerance', -2)
 
+        # Compute demand using the unified demand calculator
+        demand_result = compute_demand(current_heatmap, program_shifts, program, tolerance)
+
+        # Generate OT slots from demand windows
+        slot_result = generate_auto_slots(program_shifts, demand_result['demand_windows'], program)
+
+        # Remove existing slots for this program, then add new ones
         existing_slots = load_slots()
         other_slots = [s for s in existing_slots if s['program'] != program]
-        all_slots = other_slots + result['slots']
+        all_slots = other_slots + slot_result['slots']
         save_slots(all_slots)
 
+        # Remove existing recommendations for this program, then add new ones
         existing_recs = load_recommendations()
         other_recs = [r for r in existing_recs if r['program'] != program]
-        all_recs = other_recs + result['recommendations']
+        all_recs = other_recs + demand_result['recommendations']
         save_recommendations(all_recs)
 
-        revised = compute_revised_heatmap(heatmap_data, all_recs)
-        save_revised_heatmap(revised)
+        # Use revised heatmap from demand calculator (replaces compute_revised_heatmap)
+        save_revised_heatmap(demand_result['revised_heatmap'])
 
         return jsonify({
             'success': True,
-            'generated': len(result['slots']),
-            'summary': result['summary'],
-            'deficitBlocks': result['deficitBlocks'],
+            'generated': len(slot_result['slots']),
+            'summary': demand_result['summary'],
+            'deficitBlocks': demand_result['deficit_blocks'],
         })
     except Exception as ex:
         import traceback

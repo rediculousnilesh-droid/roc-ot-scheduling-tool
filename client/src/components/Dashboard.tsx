@@ -8,7 +8,7 @@ import TrendLineChart from './TrendLineChart';
 import DataTable from './DataTable';
 import ExportControls from './ExportControls';
 import FillRateHeatmap from './FillRateHeatmap';
-import ThresholdConfig from './ThresholdConfig';
+import ToleranceConfig from './ToleranceConfig';
 import styles from './Dashboard.module.css';
 
 interface Props {
@@ -67,7 +67,7 @@ export default function Dashboard({
   const [filterLobby, setFilterLobby] = useState('');
   const [filterOtType, setFilterOtType] = useState('');
   const [selectedWeek, setSelectedWeek] = useState('');
-  const [threshold, setThreshold] = useState(-2);
+  const [tolerance, setTolerance] = useState(-2);
   const [dashAnimKey, setDashAnimKey] = useState(0);
 
   const fillRateBarRef = useRef<ChartJS<'bar'> | null>(null);
@@ -229,13 +229,12 @@ export default function Dashboard({
 
           <div className={styles.section}>
             <div className={styles.sectionTitle}>Heatmap Comparison</div>
-            <ThresholdConfig value={threshold} onChange={setThreshold} />
+            <ToleranceConfig value={tolerance} onChange={setTolerance} />
             <FillRateHeatmap
               original={heatmap}
               revised={revised}
               programs={programs}
               lobbies={lobbies}
-              threshold={threshold}
             />
           </div>
         </>

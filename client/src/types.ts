@@ -122,3 +122,25 @@ export interface FilterConfig {
     end: string | null;
   };
 }
+
+/** A candidate OT window with computed demand metrics */
+export interface DemandWindow {
+  date: string;
+  program: string;
+  lobby: string;
+  startInterval: string;
+  endInterval: string;
+  startIdx: number;
+  endIdx: number;
+  averageDeficit: number;
+  effectiveDemand: number;
+  toleranceIntervalsUsed: number;
+  shiftStart: string;
+  shiftEnd: string;
+}
+
+/** Generate request with optional tolerance */
+export interface GenerateRequest {
+  program: string;
+  tolerance?: number;
+}

@@ -29,60 +29,24 @@ def _index_to_time(idx):
     return f"{str(h).zfill(2)}:{m}"
 
 
-def _find_deficit_blocks(heatmap_data, program, deficit_threshold, min_consecutive):
-    by_date = {}
-    for row in heatmap_data:
-        if row['program'] != program:
-            continue
-        d = row['date']
-        if d not in by_date:
-            by_date[d] = {}
-        by_date[d][row['intervalStartTime']] = row['overUnderValue']
-
-    blocks = []
-    for date_str, intervals in by_date.items():
-        block_start = None
-        block_count = 0
-        for i in range(48):
-            time_str = ALL_INTERVALS[i]
-            value = intervals.get(time_str)
-            if value is not None and value < deficit_threshold:
-                if block_start is None:
-                    block_start = i
-                block_count += 1
-            else:
-                if block_start is not None and block_count >= min_consecutive:
-                    blocks.append({
-                        'date': date_str,
-                        'program': program,
-                        'startInterval': ALL_INTERVALS[block_start],
-                        'endInterval': _index_to_time(block_start + block_count),
-                        'count': block_count,
-                        'startIdx': block_start,
-                        'endIdx': block_start + block_count,
-                    })
-                block_start = None
-                block_count = 0
-        if block_start is not None and block_count >= min_consecutive:
-            blocks.append({
-                'date': date_str,
-                'program': program,
-                'startInterval': ALL_INTERVALS[block_start],
-                'endInterval': _index_to_time(block_start + block_count),
-                'count': block_count,
-                'startIdx': block_start,
-                'endIdx': block_start + block_count,
-            })
-    return blocks
-
-
 def _overlaps(a1, a2, b1, b2):
     return a1 < b2 and b1 < a2
 
 
-def generate_auto_slots(shifts, heatmap_data, _threshold, program):
-    """Generate OT slots from deficit blocks and shift data."""
-    deficit_blocks = _find_deficit_blocks(heatmap_data, program, -2, 3)
+def generate_auto_slots(shifts, demand_windows, program):
+    """Generate OT slots from demand windows and shift data.
+
+    Args:
+        shifts: list of shift entry dicts
+        demand_windows: list of DemandWindow dicts with keys: date, program,
+            lobby, startInterval, endInterval, startIdx, endIdx,
+            averageDeficit, effectiveDemand, toleranceIntervalsUsed,
+            shiftStart, shiftEnd
+        program: str - the program identifier
+
+    Returns:
+        dict with keys: slots, summary, deficitBlocks, debug, recommendations
+    """
     debug = []
     slots = []
     recommendations = []
@@ -110,83 +74,97 @@ def generate_auto_slots(shifts, heatmap_data, _threshold, program):
         slots.append(create_slot_for_agent(params, rec['agent'], rec['agent']))
         recommendations.append(rec)
 
-    for block in deficit_blocks:
-        debug.append(f"Block: {block['date']} {block['startInterval']}-{block['endInterval']} ({block['count']} intervals)")
-        date_agents = [s for s in shifts if s['date'] == block['date']]
+    # Build deficit blocks from demand windows for backward compatibility
+    deficit_blocks = []
+    for w in demand_windows:
+        deficit_blocks.append({
+            'date': w['date'],
+            'program': w['program'],
+            'startInterval': w['startInterval'],
+            'endInterval': w['endInterval'],
+            'count': w['endIdx'] - w['startIdx'],
+            'startIdx': w['startIdx'],
+            'endIdx': w['endIdx'],
+        })
+
+    for window in demand_windows:
+        interval_count = window['endIdx'] - window['startIdx']
+        debug.append(f"Window: {window['date']} {window['startInterval']}-{window['endInterval']} ({interval_count} intervals)")
+        date_agents = [s for s in shifts if s['date'] == window['date']]
         working_agents = [s for s in date_agents if not s.get('isWeeklyOff') and s.get('shiftStart') and s.get('shiftEnd')]
         wo_agents = [s for s in date_agents if s.get('isWeeklyOff')]
-        block_matched = False
+        window_matched = False
 
         for shift in working_agents:
             ssi = _interval_index(shift['shiftStart'])
             sei = _interval_index(shift['shiftEnd'])
             shift_str = f"{shift['shiftStart']}-{shift['shiftEnd']}"
-            def_str = f"{block['startInterval']}-{block['endInterval']}"
+            def_str = f"{window['startInterval']}-{window['endInterval']}"
             agent_lobby = shift.get('lobby', '')
 
             # 2hr Pre Shift
             pre2_s = ssi - 4
             pre2_e = ssi
-            if pre2_s >= 0 and _overlaps(block['startIdx'], block['endIdx'], pre2_s, pre2_e):
-                k = f"{block['date']}|{shift['agent']}|pre2|{shift['shiftStart']}"
+            if pre2_s >= 0 and _overlaps(window['startIdx'], window['endIdx'], pre2_s, pre2_e):
+                k = f"{window['date']}|{shift['agent']}|pre2|{shift['shiftStart']}"
                 if k not in used_slot_keys:
                     tw = f"{_index_to_time(max(pre2_s, 0))}-{shift['shiftStart']}"
                     add_slot(
-                        {'otType': '2hr Pre Shift OT', 'date': block['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
-                        {'date': block['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '2hr Pre Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
+                        {'otType': '2hr Pre Shift OT', 'date': window['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
+                        {'date': window['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '2hr Pre Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
                     )
                     two_hr_pre += 1
                     used_slot_keys.add(k)
-                    block_matched = True
+                    window_matched = True
             else:
                 # 1hr Pre Shift
                 pre1_s = ssi - 2
                 pre1_e = ssi
-                if pre1_s >= 0 and _overlaps(block['startIdx'], block['endIdx'], pre1_s, pre1_e):
-                    k = f"{block['date']}|{shift['agent']}|pre1|{shift['shiftStart']}"
+                if pre1_s >= 0 and _overlaps(window['startIdx'], window['endIdx'], pre1_s, pre1_e):
+                    k = f"{window['date']}|{shift['agent']}|pre1|{shift['shiftStart']}"
                     if k not in used_slot_keys:
                         tw = f"{_index_to_time(max(pre1_s, 0))}-{shift['shiftStart']}"
                         add_slot(
-                            {'otType': '1hr Pre Shift OT', 'date': block['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
-                            {'date': block['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '1hr Pre Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
+                            {'otType': '1hr Pre Shift OT', 'date': window['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
+                            {'date': window['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '1hr Pre Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
                         )
                         one_hr_pre += 1
                         used_slot_keys.add(k)
-                        block_matched = True
+                        window_matched = True
 
             # 2hr Post Shift
             post2_s = sei
             post2_e = sei + 4
-            if post2_e <= 48 and _overlaps(block['startIdx'], block['endIdx'], post2_s, post2_e):
-                k = f"{block['date']}|{shift['agent']}|post2|{shift['shiftEnd']}"
+            if post2_e <= 48 and _overlaps(window['startIdx'], window['endIdx'], post2_s, post2_e):
+                k = f"{window['date']}|{shift['agent']}|post2|{shift['shiftEnd']}"
                 if k not in used_slot_keys:
                     tw = f"{shift['shiftEnd']}-{_index_to_time(min(post2_e, 48))}"
                     add_slot(
-                        {'otType': '2hr Post Shift OT', 'date': block['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
-                        {'date': block['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '2hr Post Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
+                        {'otType': '2hr Post Shift OT', 'date': window['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
+                        {'date': window['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '2hr Post Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
                     )
                     two_hr_post += 1
                     used_slot_keys.add(k)
-                    block_matched = True
+                    window_matched = True
             else:
                 # 1hr Post Shift
                 post1_s = sei
                 post1_e = sei + 2
-                if post1_e <= 48 and _overlaps(block['startIdx'], block['endIdx'], post1_s, post1_e):
-                    k = f"{block['date']}|{shift['agent']}|post1|{shift['shiftEnd']}"
+                if post1_e <= 48 and _overlaps(window['startIdx'], window['endIdx'], post1_s, post1_e):
+                    k = f"{window['date']}|{shift['agent']}|post1|{shift['shiftEnd']}"
                     if k not in used_slot_keys:
                         tw = f"{shift['shiftEnd']}-{_index_to_time(min(post1_e, 48))}"
                         add_slot(
-                            {'otType': '1hr Post Shift OT', 'date': block['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
-                            {'date': block['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '1hr Post Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
+                            {'otType': '1hr Post Shift OT', 'date': window['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': tw},
+                            {'date': window['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': shift_str, 'otType': '1hr Post Shift OT', 'otTimeWindow': tw, 'deficitBlock': def_str},
                         )
                         one_hr_post += 1
                         used_slot_keys.add(k)
-                        block_matched = True
+                        window_matched = True
 
         # WO agents -> Full Day OT
         for shift in wo_agents:
-            k = f"{block['date']}|{shift['agent']}|fullday"
+            k = f"{window['date']}|{shift['agent']}|fullday"
             wo_count = agent_wo_ot_count.get(shift['agent'], 0)
             total_wo = len(agent_wo_days.get(shift['agent'], []))
             if total_wo >= 2 and wo_count >= 1:
@@ -196,27 +174,27 @@ def generate_auto_slots(shifts, heatmap_data, _threshold, program):
                 rs = agent_regular_shift.get(shift['agent'], 'Full Day')
                 agent_lobby = shift.get('lobby', '')
                 add_slot(
-                    {'otType': 'Full Day OT', 'date': block['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': rs},
-                    {'date': block['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': f"WO (regular: {rs})", 'otType': 'Full Day OT', 'otTimeWindow': rs, 'deficitBlock': f"{block['startInterval']}-{block['endInterval']}"},
+                    {'otType': 'Full Day OT', 'date': window['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': rs},
+                    {'date': window['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': f"WO (regular: {rs})", 'otType': 'Full Day OT', 'otTimeWindow': rs, 'deficitBlock': f"{window['startInterval']}-{window['endInterval']}"},
                 )
                 full_day += 1
                 used_slot_keys.add(k)
                 agent_wo_ot_count[shift['agent']] = wo_count + 1
-                block_matched = True
+                window_matched = True
 
-        if not block_matched and block['count'] >= 4:
+        if not window_matched and interval_count >= 4:
             for shift in [s for s in date_agents if s.get('isWeeklyOff')]:
                 wo_count = agent_wo_ot_count.get(shift['agent'], 0)
                 total_wo = len(agent_wo_days.get(shift['agent'], []))
                 if total_wo >= 2 and wo_count >= 1:
                     continue
-                k = f"{block['date']}|{shift['agent']}|fullday_fb"
+                k = f"{window['date']}|{shift['agent']}|fullday_fb"
                 if k not in used_slot_keys:
                     rs = agent_regular_shift.get(shift['agent'], 'Full Day')
                     agent_lobby = shift.get('lobby', '')
                     add_slot(
-                        {'otType': 'Full Day OT', 'date': block['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': rs},
-                        {'date': block['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': f"WO (regular: {rs})", 'otType': 'Full Day OT', 'otTimeWindow': rs, 'deficitBlock': f"{block['startInterval']}-{block['endInterval']}"},
+                        {'otType': 'Full Day OT', 'date': window['date'], 'program': program, 'lobby': agent_lobby, 'timeWindow': rs},
+                        {'date': window['date'], 'program': program, 'lobby': agent_lobby, 'agent': shift['agent'], 'manager': shift['manager'], 'shift': f"WO (regular: {rs})", 'otType': 'Full Day OT', 'otTimeWindow': rs, 'deficitBlock': f"{window['startInterval']}-{window['endInterval']}"},
                     )
                     full_day += 1
                     used_slot_keys.add(k)

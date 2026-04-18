@@ -23,6 +23,11 @@ router.post('/login', (req, res) => {
   }
 
   if (role === 'wfm') {
+    const password = body.password || '';
+    if (password !== 'ROCWFM@101') {
+      res.status(401).json({ success: false, error: 'Invalid WFM password.' });
+      return;
+    }
     const response: LoginResponse = {
       success: true,
       token: uuidv4(),

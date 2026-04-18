@@ -5,7 +5,7 @@ import { downloadCSV } from '../modules/csvDownload';
 import SlotList from './SlotList';
 import SlotNumber from './SlotNumber';
 import FillRateHeatmap from './FillRateHeatmap';
-import ThresholdConfig from './ThresholdConfig';
+import ToleranceConfig from './ToleranceConfig';
 import styles from './SlotManagement.module.css';
 
 interface Props {
@@ -48,9 +48,11 @@ function intervalIdx(t: string): number {
 }
 
 /** OT Demand Analysis — shows theoretical OT need from heatmap deficit, independent of headcount */
-function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; shifts: ShiftEntry[]; program: string }) {
+function OTDemandTable({ heatmap, shifts, program, animKey, tolerance }: { heatmap: HeatmapRow[]; shifts: ShiftEntry[]; program: string; animKey: number; tolerance: number }) {
   const { dates, rows, demandMap } = useMemo(() => {
     if (!heatmap?.length || !shifts?.length) return { dates: [] as string[], rows: [] as { otType: string; shift: string }[], demandMap: new Map<string, number>() };
+
+    const tol = tolerance ?? -2;
 
     // Get heatmap for this program
     const hmByDate = new Map<string, Map<number, number>>();
@@ -76,6 +78,9 @@ function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; sh
     const rowSet = new Map<string, Set<string>>();
     const otTypeOrder = ['2hr Pre Shift OT', '1hr Pre Shift OT', '2hr Post Shift OT', '1hr Post Shift OT', 'Full Day OT'];
 
+    // Tolerance budget: max 2 intervals per shift|day|program can use tolerance
+    const toleranceBudget = new Map<string, number>();
+
     for (const date of dates) {
       const intervals = hmByDate.get(date);
       if (!intervals) continue;
@@ -84,49 +89,69 @@ function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; sh
         const [startStr, endStr] = sp.split('-');
         const ssi = intervalIdx(startStr);
         const sei = intervalIdx(endStr);
+        const budgetKey = `${sp}|${date}|${program}`;
 
-        // 2hr Pre Shift: check 4 intervals before shift start
+        // 2hr Pre Shift: compute average deficit across 4 intervals before shift
         const pre2Start = Math.max(ssi - 4, 0);
-        let preDeficit = 0;
+        const preCount = ssi - pre2Start;
+        let preSum = 0;
+        let preDataCount = 0;
         for (let i = pre2Start; i < ssi; i++) {
-          const val = intervals.get(i) ?? 0;
-          if (val < 0) preDeficit += Math.abs(Math.round(val));
+          const val = intervals.get(i);
+          if (val !== undefined) { preSum += val; preDataCount++; }
         }
-        if (preDeficit > 0) {
-          const otType = (ssi - pre2Start) > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
-          const key = `${otType}|${sp}|${date}`;
-          demandMap.set(key, Math.ceil(preDeficit / (ssi - pre2Start)));
-          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-          rowSet.get(otType)!.add(sp);
+        if (preDataCount > 0) {
+          const avgDeficit = preSum / preDataCount;
+          const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
+          const effectiveTol = usedBudget >= 2 ? 0 : tol;
+          if (avgDeficit < effectiveTol) {
+            const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
+            const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
+            const key = `${otType}|${sp}|${date}`;
+            demandMap.set(key, effectiveDemand);
+            if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+            rowSet.get(otType)!.add(sp);
+            const tolUsed = effectiveTol !== 0 ? Math.min(preDataCount, 2 - usedBudget) : 0;
+            toleranceBudget.set(budgetKey, usedBudget + tolUsed);
+          }
         }
 
-        // 2hr Post Shift: check 4 intervals after shift end
+        // 2hr Post Shift: compute average deficit across 4 intervals after shift
         const post2End = Math.min(sei + 4, 48);
-        let postDeficit = 0;
+        const postCount = post2End - sei;
+        let postSum = 0;
+        let postDataCount = 0;
         for (let i = sei; i < post2End; i++) {
-          const val = intervals.get(i) ?? 0;
-          if (val < 0) postDeficit += Math.abs(Math.round(val));
+          const val = intervals.get(i);
+          if (val !== undefined) { postSum += val; postDataCount++; }
         }
-        if (postDeficit > 0) {
-          const otType = (post2End - sei) > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
-          const key = `${otType}|${sp}|${date}`;
-          demandMap.set(key, Math.ceil(postDeficit / (post2End - sei)));
-          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-          rowSet.get(otType)!.add(sp);
+        if (postDataCount > 0) {
+          const avgDeficit = postSum / postDataCount;
+          const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
+          const effectiveTol = usedBudget >= 2 ? 0 : tol;
+          if (avgDeficit < effectiveTol) {
+            const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
+            const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
+            const key = `${otType}|${sp}|${date}`;
+            demandMap.set(key, effectiveDemand);
+            if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+            rowSet.get(otType)!.add(sp);
+            const tolUsed = effectiveTol !== 0 ? Math.min(postDataCount, 2 - usedBudget) : 0;
+            toleranceBudget.set(budgetKey, usedBudget + tolUsed);
+          }
         }
       }
 
-      // Full Day OT: check mid-day intervals not covered by any pre/post window
-      // If 4+ consecutive deficit intervals exist, recommend Full Day OT
+      // Full Day OT: check for 4+ consecutive deficit intervals below tolerance
       let consecDeficit = 0;
       let maxConsec = 0;
       let midDeficitTotal = 0;
       let midDeficitCount = 0;
       for (let i = 0; i < 48; i++) {
         const val = intervals.get(i) ?? 0;
-        if (val < -2) {
+        if (val < tol) {
           consecDeficit++;
-          midDeficitTotal += Math.abs(Math.round(val));
+          midDeficitTotal += Math.abs(val - tol);
           midDeficitCount++;
           if (consecDeficit > maxConsec) maxConsec = consecDeficit;
         } else {
@@ -149,7 +174,7 @@ function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; sh
     }
 
     return { dates, rows, demandMap };
-  }, [heatmap, shifts, program]);
+  }, [heatmap, shifts, program, tolerance]);
 
   if (!rows.length) return null;
 
@@ -159,6 +184,13 @@ function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; sh
 
   return (
     <div style={{ marginTop: 12 }}>
+      <style>{`
+        @keyframes demandFlashGlow {
+          0% { box-shadow: 0 0 0 rgba(180,83,9,0); }
+          50% { box-shadow: 0 0 12px rgba(180,83,9,0.3); }
+          100% { box-shadow: 0 0 0 rgba(180,83,9,0); }
+        }
+      `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
         <strong style={{ fontSize: 14, color: '#b45309' }}>📊 OT Demand Analysis (Heatmap-Based)</strong>
         <button style={{ padding: '4px 10px', fontSize: 11, background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', borderRadius: 4, cursor: 'pointer' }}
@@ -188,7 +220,24 @@ function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; sh
                   <td style={{ padding: '5px 10px', fontWeight: 500 }}>{r.shift}</td>
                   {dates.map(d => {
                     const count = demandMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
-                    return <td key={d} style={{ padding: '5px 10px', textAlign: 'center', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? '#b45309' : '#cbd5e1' }}>{count > 0 ? count : ''}</td>;
+                    return (
+                      <td key={d} style={{
+                        padding: '5px 10px', textAlign: 'center',
+                        fontWeight: count > 0 ? 700 : 400,
+                        color: count > 0 ? '#b45309' : '#cbd5e1',
+                        overflow: 'hidden',
+                        animation: count > 0 && animKey > 0 ? `demandFlashGlow 0.8s ease ${(i * 0.1 + dates.indexOf(d) * 0.15 + 1)}s` : 'none',
+                        borderRadius: 4,
+                      }}>
+                        {count > 0 ? (
+                          <SlotNumber
+                            value={count}
+                            delay={(i * 100 + dates.indexOf(d) * 150)}
+                            animKey={animKey}
+                          />
+                        ) : ''}
+                      </td>
+                    );
                   })}
                 </tr>
               );
@@ -469,67 +518,11 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [msgType, setMsgType] = useState<'success' | 'error'>('success');
   const [loading, setLoading] = useState(false);
   const [generateCount, setGenerateCount] = useState(0);
-  const [threshold, setThreshold] = useState(-2);
+  const [tolerance, setTolerance] = useState(-2);
 
-  // Compute demand-based revised heatmap — adds exactly enough OT to cover deficit in covered intervals
-  const demandRevisedHeatmap = useMemo(() => {
-    if (!heatmap?.length || !shifts?.length || !selectedProgram) return [];
-
-    // Get unique shift patterns for this program
-    const shiftPatterns = new Set<string>();
-    for (const s of shifts) {
-      if (s.program !== selectedProgram || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
-      shiftPatterns.add(`${s.shiftStart}|${s.shiftEnd}`);
-    }
-
-    // Build set of intervals covered by any OT window
-    const dates = [...new Set(heatmap.filter(r => r.program === selectedProgram).map(r => r.date))];
-    const coveredIntervals = new Set<string>();
-
-    for (const date of dates) {
-      for (const sp of shiftPatterns) {
-        const [startStr, endStr] = sp.split('|');
-        const ssi = intervalIdx(startStr);
-        const sei = intervalIdx(endStr);
-        // Pre shift: 4 intervals before shift
-        for (let i = Math.max(ssi - 4, 0); i < ssi; i++) {
-          const h = String(Math.floor(i / 2)).padStart(2, '0');
-          const m = i % 2 === 0 ? '00' : '30';
-          coveredIntervals.add(`${date}|${h}:${m}`);
-        }
-        // Post shift: 4 intervals after shift
-        for (let i = sei; i < Math.min(sei + 4, 48); i++) {
-          const h = String(Math.floor(i / 2)).padStart(2, '0');
-          const m = i % 2 === 0 ? '00' : '30';
-          coveredIntervals.add(`${date}|${h}:${m}`);
-        }
-      }
-      // Full day: all intervals with 4+ consecutive deficit
-      let consecCount = 0;
-      const blockIntervals: string[] = [];
-      for (let i = 0; i < 48; i++) {
-        const h = String(Math.floor(i / 2)).padStart(2, '0');
-        const m = i % 2 === 0 ? '00' : '30';
-        const key = `${date}|${h}:${m}`;
-        const val = heatmap.filter(r => r.date === date && r.program === selectedProgram && r.intervalStartTime === `${h}:${m}`).reduce((sum, r) => sum + r.overUnderValue, 0);
-        if (val < -2) { consecCount++; blockIntervals.push(key); }
-        else {
-          if (consecCount >= 4) blockIntervals.forEach(k => coveredIntervals.add(k));
-          consecCount = 0; blockIntervals.length = 0;
-        }
-      }
-      if (consecCount >= 4) blockIntervals.forEach(k => coveredIntervals.add(k));
-    }
-
-    // For covered intervals with deficit, bring to 0
-    return heatmap.map(r => {
-      const key = `${r.date}|${r.intervalStartTime}`;
-      if (r.program === selectedProgram && coveredIntervals.has(key) && r.overUnderValue < 0) {
-        return { ...r, overUnderValue: 0 };
-      }
-      return r;
-    });
-  }, [heatmap, shifts, selectedProgram]);
+  // The demand-based revised heatmap now comes from the server's demand calculator
+  // via the `revised` prop. No local computation needed.
+  // We pass `revised` directly to FillRateHeatmap as demandRevised.
 
   const showMsg = (text: string, type: 'success' | 'error') => {
     setMessage(text); setMsgType(type);
@@ -626,7 +619,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
     if (!selectedProgram) return;
     setLoading(true);
     try {
-      const res = await api.generateSlots(selectedProgram);
+      const res = await api.generateSlots(selectedProgram, tolerance);
       showMsg(`Generated ${res.generated} slots for ${selectedProgram}`, 'success');
       setGenerateCount((c) => c + 1);
       if (onRefresh) onRefresh();
@@ -705,14 +698,14 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
         </div>
       ) : (
         <>
-          {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable heatmap={heatmap} shifts={shifts} program={selectedProgram} />}
+          {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable heatmap={heatmap} shifts={shifts} program={selectedProgram} animKey={generateCount} tolerance={tolerance} />}
           {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} />}
           <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
           {heatmap && heatmap.length > 0 && (
             <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.3rem', color: '#1e293b' }}>Heatmap Comparison</div>
-              <ThresholdConfig value={threshold} onChange={setThreshold} />
-              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} threshold={threshold} />
+              <ToleranceConfig value={tolerance} onChange={setTolerance} />
+              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={revised || []} programs={programs} lobbies={lobbies} />
             </div>
           )}
           {filteredSlots.length === 0 && (

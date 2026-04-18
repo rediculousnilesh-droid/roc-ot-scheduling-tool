@@ -15,7 +15,7 @@ REPO_NAME = "roc-ot-scheduling-tool"
 BRANCH = "main"
 
 # Files/folders to skip
-SKIP_DIRS = {'node_modules', '.git', 'dist', 'data'}
+SKIP_DIRS = {'node_modules', '.git', 'data'}
 SKIP_FILES = {'.gitkeep'}
 
 def read_token():

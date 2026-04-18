@@ -169,6 +169,58 @@ export interface LoginResponse {
 /** Generate request */
 export interface GenerateRequest {
   program: string;
+  tolerance?: number;
+}
+
+/** A contiguous block of deficit intervals */
+export interface DeficitBlock {
+  date: string;
+  program: string;
+  startInterval: string;
+  endInterval: string;
+  count: number;
+  startIdx: number;
+  endIdx: number;
+}
+
+/** A candidate OT window with computed demand metrics */
+export interface DemandWindow {
+  date: string;
+  program: string;
+  lobby: string;
+  startInterval: string;
+  endInterval: string;
+  startIdx: number;
+  endIdx: number;
+  averageDeficit: number;
+  effectiveDemand: number;
+  toleranceIntervalsUsed: number;
+  shiftStart: string;
+  shiftEnd: string;
+}
+
+/** Input for the demand calculator */
+export interface DemandInput {
+  heatmapData: HeatmapRow[];
+  shifts: ShiftEntry[];
+  program: string;
+  tolerance: number;
+}
+
+/** Full demand calculation result */
+export interface DemandResult {
+  demandWindows: DemandWindow[];
+  recommendations: OTRecommendation[];
+  revisedHeatmap: HeatmapRow[];
+  summary: {
+    total: number;
+    oneHrPre: number;
+    oneHrPost: number;
+    twoHrPre: number;
+    twoHrPost: number;
+    fullDay: number;
+  };
+  deficitBlocks: DeficitBlock[];
 }
 
 /** Slot action requests */

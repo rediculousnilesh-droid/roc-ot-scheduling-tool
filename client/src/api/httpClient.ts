@@ -89,6 +89,7 @@ export async function getRoster(): Promise<{
 
 export async function generateSlots(
   program: string,
+  tolerance?: number,
 ): Promise<{
   success: boolean;
   generated: number;
@@ -97,7 +98,7 @@ export async function generateSlots(
 }> {
   return request('/generate', {
     method: 'POST',
-    body: JSON.stringify({ program }),
+    body: JSON.stringify({ program, tolerance }),
   });
 }
 
