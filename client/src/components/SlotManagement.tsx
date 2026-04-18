@@ -520,9 +520,82 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [generateCount, setGenerateCount] = useState(0);
   const [tolerance, setTolerance] = useState(-2);
 
-  // The demand-based revised heatmap now comes from the server's demand calculator
-  // via the `revised` prop. No local computation needed.
-  // We pass `revised` directly to FillRateHeatmap as demandRevised.
+  // Compute demand-based revised heatmap: for intervals covered by OT windows,
+  // bring deficit up to the tolerance level. This shows the ideal projected state
+  // if all recommended OT is filled.
+  const demandRevisedHeatmap = useMemo(() => {
+    if (!heatmap?.length || !shifts?.length || !selectedProgram) return [];
+
+    const tol = tolerance ?? -2;
+
+    // Get unique shift patterns for this program
+    const shiftPatterns = new Set<string>();
+    for (const s of shifts) {
+      if (s.program !== selectedProgram || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
+      shiftPatterns.add(`${s.shiftStart}|${s.shiftEnd}`);
+    }
+
+    // Build set of intervals covered by any OT window
+    const dates = [...new Set(heatmap.filter(r => r.program === selectedProgram).map(r => r.date))];
+    const coveredIntervals = new Set<string>();
+
+    for (const date of dates) {
+      for (const sp of shiftPatterns) {
+        const [startStr, endStr] = sp.split('|');
+        const ssi = intervalIdx(startStr);
+        const sei = intervalIdx(endStr);
+        // Pre shift: 4 intervals before shift
+        for (let i = Math.max(ssi - 4, 0); i < ssi; i++) {
+          const h = String(Math.floor(i / 2)).padStart(2, '0');
+          const m = i % 2 === 0 ? '00' : '30';
+          coveredIntervals.add(`${date}|${h}:${m}`);
+        }
+        // Post shift: 4 intervals after shift
+        for (let i = sei; i < Math.min(sei + 4, 48); i++) {
+          const h = String(Math.floor(i / 2)).padStart(2, '0');
+          const m = i % 2 === 0 ? '00' : '30';
+          coveredIntervals.add(`${date}|${h}:${m}`);
+        }
+      }
+      // Full day: all intervals with 4+ consecutive deficit below tolerance
+      const hmForDate = heatmap.filter(r => r.date === date && r.program === selectedProgram);
+      let consecCount = 0;
+      const blockIntervals: string[] = [];
+      for (let i = 0; i < 48; i++) {
+        const h = String(Math.floor(i / 2)).padStart(2, '0');
+        const m = i % 2 === 0 ? '00' : '30';
+        const key = `${date}|${h}:${m}`;
+        const val = hmForDate.filter(r => r.intervalStartTime === `${h}:${m}`).reduce((sum, r) => sum + r.overUnderValue, 0);
+        if (val < tol) { consecCount++; blockIntervals.push(key); }
+        else {
+          if (consecCount >= 4) blockIntervals.forEach(k => coveredIntervals.add(k));
+          consecCount = 0; blockIntervals.length = 0;
+        }
+      }
+      if (consecCount >= 4) blockIntervals.forEach(k => coveredIntervals.add(k));
+    }
+
+    // For covered intervals with deficit below tolerance, bring up to tolerance level
+    // Allow max 2 intervals per shift/day to stay at tolerance; rest go to 0
+    const budgetUsed = new Map<string, number>();
+    return heatmap.map(r => {
+      const key = `${r.date}|${r.intervalStartTime}`;
+      if (r.program === selectedProgram && coveredIntervals.has(key) && r.overUnderValue < tol) {
+        // Find which shift pattern covers this interval for budget tracking
+        let budgetKey = `${r.date}|${selectedProgram}`;
+        const used = budgetUsed.get(budgetKey) ?? 0;
+        if (used < 2) {
+          // This interval can use tolerance — bring to tolerance level
+          budgetUsed.set(budgetKey, used + 1);
+          return { ...r, overUnderValue: tol };
+        } else {
+          // Budget exhausted — bring to 0
+          return { ...r, overUnderValue: 0 };
+        }
+      }
+      return r;
+    });
+  }, [heatmap, shifts, selectedProgram, tolerance]);
 
   const showMsg = (text: string, type: 'success' | 'error') => {
     setMessage(text); setMsgType(type);
@@ -705,7 +778,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
             <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.3rem', color: '#1e293b' }}>Heatmap Comparison</div>
               <ToleranceConfig value={tolerance} onChange={setTolerance} />
-              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={revised || []} programs={programs} lobbies={lobbies} />
+              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} />
             </div>
           )}
           {filteredSlots.length === 0 && (
