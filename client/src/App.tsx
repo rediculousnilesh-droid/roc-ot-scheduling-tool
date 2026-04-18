@@ -202,7 +202,7 @@ export default function App() {
 
             {activeTab === 'slots' && (
               <SlotManagement
-                slots={slots} shifts={shiftEntries} programs={programs} lobbies={lobbies} heatmap={heatmap} onRefresh={fetchAll}
+                slots={slots} shifts={shiftEntries} programs={programs} lobbies={lobbies} heatmap={heatmap} revised={revised} onRefresh={fetchAll}
                 initialProgram={slotMgmtProgram} initialLobby={slotMgmtLobby} initialWeek={slotMgmtWeek}
                 onSelectionChange={(p, l, w) => { setSlotMgmtProgram(p); setSlotMgmtLobby(l); setSlotMgmtWeek(w); }}
               />

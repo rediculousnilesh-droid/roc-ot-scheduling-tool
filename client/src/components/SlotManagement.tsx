@@ -4,12 +4,15 @@ import * as api from '../api/httpClient';
 import { downloadCSV } from '../modules/csvDownload';
 import SlotList from './SlotList';
 import SlotNumber from './SlotNumber';
+import FillRateHeatmap from './FillRateHeatmap';
+import ThresholdConfig from './ThresholdConfig';
 import styles from './SlotManagement.module.css';
 
 interface Props {
   slots: OTSlot[];
   shifts: ShiftEntry[];
   heatmap?: HeatmapRow[];
+  revised?: HeatmapRow[];
   programs: string[];
   lobbies: string[];
   onRefresh?: () => void;
@@ -458,7 +461,7 @@ function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: Shi
   );
 }
 
-export default function SlotManagement({ slots, shifts, programs, lobbies, heatmap, onRefresh, initialProgram, initialLobby, initialWeek, onSelectionChange }: Props) {
+export default function SlotManagement({ slots, shifts, programs, lobbies, heatmap, revised, onRefresh, initialProgram, initialLobby, initialWeek, onSelectionChange }: Props) {
   const [selectedProgram, setSelectedProgram] = useState(initialProgram || '');
   const [selectedLobby, setSelectedLobby] = useState(initialLobby || '');
   const [selectedWeek, setSelectedWeek] = useState(initialWeek || '');
@@ -466,6 +469,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [msgType, setMsgType] = useState<'success' | 'error'>('success');
   const [loading, setLoading] = useState(false);
   const [generateCount, setGenerateCount] = useState(0);
+  const [threshold, setThreshold] = useState(-2);
 
   const showMsg = (text: string, type: 'success' | 'error') => {
     setMessage(text); setMsgType(type);
@@ -644,6 +648,13 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
           {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable heatmap={heatmap} shifts={shifts} program={selectedProgram} />}
           {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} />}
           <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
+          {heatmap && heatmap.length > 0 && (
+            <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '1rem', border: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.6rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.4rem', color: '#1e293b' }}>Heatmap Comparison</div>
+              <ThresholdConfig value={threshold} onChange={setThreshold} />
+              <FillRateHeatmap original={heatmap} revised={revised || []} programs={programs} lobbies={lobbies} threshold={threshold} />
+            </div>
+          )}
           {filteredSlots.length === 0 && (
             <div style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8', fontSize: '0.85rem' }}>
               No OT slots for this selection.
