@@ -35,6 +35,172 @@ function fmtDate(d: string): string {
   return `${parseInt(p[2])}-${months[parseInt(p[1]) - 1]}-${p[0].slice(2)}`;
 }
 
+function intervalIdx(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 2 + (m >= 30 ? 1 : 0);
+}
+
+/** OT Demand Analysis — shows theoretical OT need from heatmap deficit, independent of headcount */
+function OTDemandTable({ heatmap, shifts, program }: { heatmap: HeatmapRow[]; shifts: ShiftEntry[]; program: string }) {
+  const { dates, rows, demandMap } = useMemo(() => {
+    if (!heatmap?.length || !shifts?.length) return { dates: [] as string[], rows: [] as { otType: string; shift: string }[], demandMap: new Map<string, number>() };
+
+    // Get heatmap for this program
+    const hmByDate = new Map<string, Map<number, number>>();
+    const allDates = new Set<string>();
+    for (const r of heatmap) {
+      if (r.program !== program) continue;
+      allDates.add(r.date);
+      if (!hmByDate.has(r.date)) hmByDate.set(r.date, new Map());
+      const idx = intervalIdx(r.intervalStartTime);
+      const existing = hmByDate.get(r.date)!.get(idx) ?? 0;
+      hmByDate.get(r.date)!.set(idx, existing + r.overUnderValue);
+    }
+    const dates = [...allDates].sort();
+
+    // Get unique shift patterns
+    const shiftPatterns = new Set<string>();
+    for (const s of shifts) {
+      if (s.program !== program || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
+      shiftPatterns.add(`${s.shiftStart}-${s.shiftEnd}`);
+    }
+
+    const demandMap = new Map<string, number>();
+    const rowSet = new Map<string, Set<string>>();
+    const otTypeOrder = ['2hr Pre Shift OT', '1hr Pre Shift OT', '2hr Post Shift OT', '1hr Post Shift OT', 'Full Day OT'];
+
+    for (const date of dates) {
+      const intervals = hmByDate.get(date);
+      if (!intervals) continue;
+
+      for (const sp of shiftPatterns) {
+        const [startStr, endStr] = sp.split('-');
+        const ssi = intervalIdx(startStr);
+        const sei = intervalIdx(endStr);
+
+        // 2hr Pre Shift: check 4 intervals before shift start
+        const pre2Start = Math.max(ssi - 4, 0);
+        let preDeficit = 0;
+        for (let i = pre2Start; i < ssi; i++) {
+          const val = intervals.get(i) ?? 0;
+          if (val < 0) preDeficit += Math.abs(Math.round(val));
+        }
+        if (preDeficit > 0) {
+          const otType = (ssi - pre2Start) > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
+          const key = `${otType}|${sp}|${date}`;
+          demandMap.set(key, Math.ceil(preDeficit / (ssi - pre2Start)));
+          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+          rowSet.get(otType)!.add(sp);
+        }
+
+        // 2hr Post Shift: check 4 intervals after shift end
+        const post2End = Math.min(sei + 4, 48);
+        let postDeficit = 0;
+        for (let i = sei; i < post2End; i++) {
+          const val = intervals.get(i) ?? 0;
+          if (val < 0) postDeficit += Math.abs(Math.round(val));
+        }
+        if (postDeficit > 0) {
+          const otType = (post2End - sei) > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
+          const key = `${otType}|${sp}|${date}`;
+          demandMap.set(key, Math.ceil(postDeficit / (post2End - sei)));
+          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+          rowSet.get(otType)!.add(sp);
+        }
+      }
+
+      // Full Day OT: check mid-day intervals not covered by any pre/post window
+      // If 4+ consecutive deficit intervals exist, recommend Full Day OT
+      let consecDeficit = 0;
+      let maxConsec = 0;
+      let midDeficitTotal = 0;
+      let midDeficitCount = 0;
+      for (let i = 0; i < 48; i++) {
+        const val = intervals.get(i) ?? 0;
+        if (val < -2) {
+          consecDeficit++;
+          midDeficitTotal += Math.abs(Math.round(val));
+          midDeficitCount++;
+          if (consecDeficit > maxConsec) maxConsec = consecDeficit;
+        } else {
+          consecDeficit = 0;
+        }
+      }
+      if (maxConsec >= 4) {
+        const key = `Full Day OT|Full Day|${date}`;
+        demandMap.set(key, midDeficitCount > 0 ? Math.ceil(midDeficitTotal / midDeficitCount) : 1);
+        if (!rowSet.has('Full Day OT')) rowSet.set('Full Day OT', new Set());
+        rowSet.get('Full Day OT')!.add('Full Day');
+      }
+    }
+
+    const rows: { otType: string; shift: string }[] = [];
+    for (const ot of otTypeOrder) {
+      const shiftsForType = rowSet.get(ot);
+      if (!shiftsForType) continue;
+      for (const shift of [...shiftsForType].sort()) rows.push({ otType: ot, shift });
+    }
+
+    return { dates, rows, demandMap };
+  }, [heatmap, shifts, program]);
+
+  if (!rows.length) return null;
+
+  const otTypeRowCounts = new Map<string, number>();
+  for (const r of rows) otTypeRowCounts.set(r.otType, (otTypeRowCounts.get(r.otType) ?? 0) + 1);
+  let lastOT = '';
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <strong style={{ fontSize: 14, color: '#b45309' }}>📊 OT Demand Analysis (Heatmap-Based)</strong>
+        <button style={{ padding: '4px 10px', fontSize: 11, background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', borderRadius: 4, cursor: 'pointer' }}
+          onClick={() => {
+            const headers = ['OT Type', 'Shift', ...dates.map(fmtDate)];
+            const csvRows = rows.map(r => [r.otType, r.shift, ...dates.map(d => String(demandMap.get(`${r.otType}|${r.shift}|${d}`) ?? ''))]);
+            downloadCSV(headers, csvRows, 'ot_demand_analysis.csv');
+          }}>⬇ Download CSV</button>
+      </div>
+      <div style={{ overflowX: 'auto', border: '1px solid #fde68a', borderRadius: 6 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12, whiteSpace: 'nowrap' }}>
+          <thead>
+            <tr style={{ background: '#fffbeb' }}>
+              <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #fbbf24', fontWeight: 700 }}>OT Type</th>
+              <th style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #fbbf24', fontWeight: 700 }}>Shift</th>
+              {dates.map(d => <th key={d} style={{ padding: '6px 10px', textAlign: 'center', borderBottom: '2px solid #fbbf24', fontWeight: 700 }}>{fmtDate(d)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const showOT = r.otType !== lastOT;
+              if (showOT) lastOT = r.otType;
+              const rowSpan = showOT ? otTypeRowCounts.get(r.otType) ?? 1 : 0;
+              return (
+                <tr key={i} style={{ borderBottom: '1px solid #fef3c7' }}>
+                  {showOT && <td rowSpan={rowSpan} style={{ padding: '5px 10px', fontWeight: 600, background: '#fffbeb', borderRight: '1px solid #fef3c7', verticalAlign: 'top' }}>{r.otType}</td>}
+                  <td style={{ padding: '5px 10px', fontWeight: 500 }}>{r.shift}</td>
+                  {dates.map(d => {
+                    const count = demandMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0;
+                    return <td key={d} style={{ padding: '5px 10px', textAlign: 'center', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? '#b45309' : '#cbd5e1' }}>{count > 0 ? count : ''}</td>;
+                  })}
+                </tr>
+              );
+            })}
+            <tr style={{ borderTop: '2px solid #fbbf24', background: '#fffbeb' }}>
+              <td colSpan={2} style={{ padding: '6px 10px', fontWeight: 700, color: '#b45309' }}>Total</td>
+              {dates.map(d => {
+                let total = 0;
+                rows.forEach(r => { total += demandMap.get(`${r.otType}|${r.shift}|${d}`) ?? 0; });
+                return <td key={d} style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color: '#b45309' }}>{total > 0 ? total : ''}</td>;
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** Pivot table: OT Type × Shift rows, Date columns, count values */
 function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: ShiftEntry[]; animKey: number }) {
   const dates = useMemo(() => [...new Set(slots.map(s => s.date))].sort(), [slots]);
@@ -468,6 +634,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
         </div>
       ) : (
         <>
+          {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable heatmap={heatmap} shifts={shifts} program={selectedProgram} />}
           {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} />}
           <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
           {filteredSlots.length === 0 && (
