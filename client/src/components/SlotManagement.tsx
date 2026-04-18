@@ -471,58 +471,113 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [generateCount, setGenerateCount] = useState(0);
   const [threshold, setThreshold] = useState(-2);
 
-  // Compute demand-based revised heatmap (adds OT demand headcount back, irrespective of actual agents)
+  // Compute demand-based revised heatmap (adds recommended OT headcount back per interval)
   const demandRevisedHeatmap = useMemo(() => {
     if (!heatmap?.length || !shifts?.length || !selectedProgram) return [];
-    const hmMap = new Map<string, number>();
+
+    // Build interval deficit map
+    const hmByDateInterval = new Map<string, number>();
     for (const r of heatmap) {
-      const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
-      hmMap.set(key, r.overUnderValue);
+      if (r.program !== selectedProgram) continue;
+      const key = `${r.date}|${r.intervalStartTime}`;
+      hmByDateInterval.set(key, (hmByDateInterval.get(key) ?? 0) + r.overUnderValue);
     }
-    // For each shift pattern, add +1 to pre/post intervals that have deficit
+
+    // Get unique shift patterns
     const shiftPatterns = new Set<string>();
     for (const s of shifts) {
       if (s.program !== selectedProgram || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
       shiftPatterns.add(`${s.shiftStart}|${s.shiftEnd}`);
     }
+
     const dates = [...new Set(heatmap.filter(r => r.program === selectedProgram).map(r => r.date))];
+
+    // For each date, calculate how many OT headcount to add per interval
+    const addMap = new Map<string, number>();
+
     for (const date of dates) {
       for (const sp of shiftPatterns) {
         const [startStr, endStr] = sp.split('|');
         const ssi = intervalIdx(startStr);
         const sei = intervalIdx(endStr);
-        // Pre shift: 4 intervals before shift
-        for (let i = Math.max(ssi - 4, 0); i < ssi; i++) {
+
+        // Pre shift window: intervals before shift start
+        const preStart = Math.max(ssi - 4, 0);
+        let preMaxDeficit = 0;
+        for (let i = preStart; i < ssi; i++) {
           const h = String(Math.floor(i / 2)).padStart(2, '0');
           const m = i % 2 === 0 ? '00' : '30';
-          const interval = `${h}:${m}`;
-          // Find matching heatmap rows for this date+interval
-          for (const r of heatmap) {
-            if (r.date === date && r.program === selectedProgram && r.intervalStartTime === interval) {
-              const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
-              const val = hmMap.get(key) ?? r.overUnderValue;
-              if (val < 0) hmMap.set(key, val + 1);
-            }
+          const val = hmByDateInterval.get(`${date}|${h}:${m}`) ?? 0;
+          if (val < 0) preMaxDeficit = Math.max(preMaxDeficit, Math.abs(val));
+        }
+        if (preMaxDeficit > 0) {
+          for (let i = preStart; i < ssi; i++) {
+            const h = String(Math.floor(i / 2)).padStart(2, '0');
+            const m = i % 2 === 0 ? '00' : '30';
+            const key = `${date}|${h}:${m}`;
+            addMap.set(key, Math.max(addMap.get(key) ?? 0, preMaxDeficit));
           }
         }
-        // Post shift: 4 intervals after shift
-        for (let i = sei; i < Math.min(sei + 4, 48); i++) {
+
+        // Post shift window: intervals after shift end
+        const postEnd = Math.min(sei + 4, 48);
+        let postMaxDeficit = 0;
+        for (let i = sei; i < postEnd; i++) {
           const h = String(Math.floor(i / 2)).padStart(2, '0');
           const m = i % 2 === 0 ? '00' : '30';
-          const interval = `${h}:${m}`;
-          for (const r of heatmap) {
-            if (r.date === date && r.program === selectedProgram && r.intervalStartTime === interval) {
-              const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
-              const val = hmMap.get(key) ?? r.overUnderValue;
-              if (val < 0) hmMap.set(key, val + 1);
-            }
+          const val = hmByDateInterval.get(`${date}|${h}:${m}`) ?? 0;
+          if (val < 0) postMaxDeficit = Math.max(postMaxDeficit, Math.abs(val));
+        }
+        if (postMaxDeficit > 0) {
+          for (let i = sei; i < postEnd; i++) {
+            const h = String(Math.floor(i / 2)).padStart(2, '0');
+            const m = i % 2 === 0 ? '00' : '30';
+            const key = `${date}|${h}:${m}`;
+            addMap.set(key, Math.max(addMap.get(key) ?? 0, postMaxDeficit));
           }
         }
       }
+
+      // Full day: for mid-day intervals with 4+ consecutive deficit
+      let consecCount = 0;
+      let blockIntervals: number[] = [];
+      for (let i = 0; i < 48; i++) {
+        const h = String(Math.floor(i / 2)).padStart(2, '0');
+        const m = i % 2 === 0 ? '00' : '30';
+        const val = hmByDateInterval.get(`${date}|${h}:${m}`) ?? 0;
+        if (val < -2) {
+          consecCount++;
+          blockIntervals.push(i);
+        } else {
+          if (consecCount >= 4) {
+            for (const bi of blockIntervals) {
+              const bh = String(Math.floor(bi / 2)).padStart(2, '0');
+              const bm = bi % 2 === 0 ? '00' : '30';
+              const key = `${date}|${bh}:${bm}`;
+              const defVal = Math.abs(hmByDateInterval.get(key) ?? 0);
+              addMap.set(key, Math.max(addMap.get(key) ?? 0, defVal));
+            }
+          }
+          consecCount = 0;
+          blockIntervals = [];
+        }
+      }
+      if (consecCount >= 4) {
+        for (const bi of blockIntervals) {
+          const bh = String(Math.floor(bi / 2)).padStart(2, '0');
+          const bm = bi % 2 === 0 ? '00' : '30';
+          const key = `${date}|${bh}:${bm}`;
+          const defVal = Math.abs(hmByDateInterval.get(key) ?? 0);
+          addMap.set(key, Math.max(addMap.get(key) ?? 0, defVal));
+        }
+      }
     }
+
+    // Apply additions to heatmap
     return heatmap.map(r => {
-      const key = `${r.date}|${r.program}|${r.lobby}|${r.intervalStartTime}`;
-      return { ...r, overUnderValue: hmMap.get(key) ?? r.overUnderValue };
+      const key = `${r.date}|${r.intervalStartTime}`;
+      const add = addMap.get(key) ?? 0;
+      return { ...r, overUnderValue: r.overUnderValue + add };
     });
   }, [heatmap, shifts, selectedProgram]);
 
