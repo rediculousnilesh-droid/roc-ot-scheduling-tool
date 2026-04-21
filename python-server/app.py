@@ -348,11 +348,28 @@ def generate_slots():
         week_start = _get_current_week_start()
         current_heatmap = [r for r in heatmap_data if r['date'] >= week_start]
         if not current_heatmap:
-            return jsonify({'error': 'No heatmap data available for the current or future weeks.'}), 400
+            all_hm_dates = sorted(set(r['date'] for r in heatmap_data))
+            return jsonify({
+                'error': f'No heatmap data available for the current or future weeks. '
+                         f'Week start: {week_start}. '
+                         f'Heatmap dates: {all_hm_dates}.'
+            }), 400
 
         program_shifts = [e for e in roster['entries'] if e['program'] == program and e['date'] >= week_start]
         if not program_shifts:
-            return jsonify({'error': f'No shift roster data for {program} in the current or future weeks.'}), 400
+            # Debug: show what programs and dates exist
+            all_programs = sorted(set(e['program'] for e in roster['entries']))
+            all_dates = sorted(set(e['date'] for e in roster['entries']))
+            future_dates = sorted(set(e['date'] for e in roster['entries'] if e['date'] >= week_start))
+            program_entries_all = [e for e in roster['entries'] if e['program'] == program]
+            return jsonify({
+                'error': f'No shift roster data for "{program}" in the current or future weeks. '
+                         f'Week start: {week_start}. '
+                         f'Programs in roster: {all_programs}. '
+                         f'All dates in roster: {all_dates}. '
+                         f'Future dates: {future_dates}. '
+                         f'Entries for "{program}" (any date): {len(program_entries_all)}.'
+            }), 400
 
         # Extract tolerance from request body (default -2)
         tolerance = body.get('tolerance', -2)

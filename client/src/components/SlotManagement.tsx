@@ -67,11 +67,25 @@ function OTDemandTable({ heatmap, shifts, program, animKey, tolerance }: { heatm
     }
     const dates = [...allDates].sort();
 
-    // Get unique shift patterns
+    // Get unique shift patterns (from working agents)
     const shiftPatterns = new Set<string>();
     for (const s of shifts) {
       if (s.program !== program || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
       shiftPatterns.add(`${s.shiftStart}-${s.shiftEnd}`);
+    }
+
+    // Get WO agents' regular shift patterns (for Full Day OT)
+    const agentRegularShift = new Map<string, string>();
+    for (const s of shifts) {
+      if (!s.isWeeklyOff && s.shiftStart && s.shiftEnd && !agentRegularShift.has(s.agent)) {
+        agentRegularShift.set(s.agent, `${s.shiftStart}-${s.shiftEnd}`);
+      }
+    }
+    const woShiftPatterns = new Set<string>();
+    for (const s of shifts) {
+      if (s.program !== program || !s.isWeeklyOff) continue;
+      const rs = agentRegularShift.get(s.agent);
+      if (rs) woShiftPatterns.add(rs);
     }
 
     const demandMap = new Map<string, number>();
@@ -142,10 +156,9 @@ function OTDemandTable({ heatmap, shifts, program, animKey, tolerance }: { heatm
         }
       }
 
-      // Full Day OT: for each shift pattern, check if there are 4+ consecutive
+      // Full Day OT: for WO agents' regular shift patterns, check if there are 4+ consecutive
       // deficit intervals below tolerance during that shift window.
-      // Show the actual shift pattern (e.g., "07:00-16:00") instead of "Full Day"
-      for (const sp of shiftPatterns) {
+      for (const sp of woShiftPatterns) {
         const [startStr, endStr] = sp.split('-');
         const ssi = intervalIdx(startStr);
         const sei = intervalIdx(endStr);
