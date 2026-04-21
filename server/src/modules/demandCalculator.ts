@@ -411,7 +411,7 @@ function identifyCandidateWindows(
       }
     }
 
-    // WO agents → Full Day OT
+    // WO agents → Full Day OT (with shift-overlap filter)
     for (const shift of woAgents) {
       const woCount = agentWOOTCount.get(shift.agent) ?? 0;
       const totalWO = (agentWODays.get(shift.agent) ?? []).length;
@@ -420,7 +420,6 @@ function identifyCandidateWindows(
 
       const k = `${date}|${shift.agent}|fullday`;
       if (usedSlotKeys.has(k)) continue;
-      usedSlotKeys.add(k);
 
       const rs = agentRegularShift.get(shift.agent) ?? 'Full Day';
       const agentLobby = shift.lobby ?? '';
@@ -432,7 +431,27 @@ function identifyCandidateWindows(
       if (rsMatch) {
         startIdx = intervalIndex(rsMatch[1]);
         endIdx = intervalIndex(rsMatch[2]);
+
+        // Filter: only assign WO agent if their regular shift overlaps deficit
+        let shiftSi = intervalIndex(rsMatch[1]);
+        let shiftSei = intervalIndex(rsMatch[2]);
+        if (shiftSei <= shiftSi) shiftSei += 48;
+        // Check if any deficit exists in the shift's interval range
+        const mapKey = `${date}|${program}|${agentLobby}`;
+        const intervals = intervalMap.get(mapKey);
+        let hasOverlap = false;
+        if (intervals) {
+          for (let i = shiftSi; i < shiftSei; i++) {
+            const actualIdx = i % 48;
+            const time = ALL_INTERVALS[actualIdx];
+            const val = intervals.get(time);
+            if (val !== undefined && val < 0) { hasOverlap = true; break; }
+          }
+        }
+        if (!hasOverlap) continue;
       }
+
+      usedSlotKeys.add(k);
 
       candidates.push({
         date,

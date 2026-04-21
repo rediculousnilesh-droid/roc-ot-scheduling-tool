@@ -2,11 +2,12 @@ import Papa from 'papaparse';
 import type { RawShiftRow, ShiftEntry, ShiftRoster, ValidationError } from '../types.js';
 
 /**
- * Normalizes date headers like "4/15/2026" or "04/15/2026" to "YYYY-MM-DD".
+ * Normalizes date headers like "4/15/2026", "04/15/2026", "31-May-26", "1-Jun-26" to "YYYY-MM-DD".
  */
 export function normalizeDateHeader(header: string): string | null {
   const trimmed = header.trim();
 
+  // Try M/D/YYYY or MM/DD/YYYY
   const slashMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
   if (slashMatch) {
     const m = slashMatch[1].padStart(2, '0');
@@ -14,7 +15,45 @@ export function normalizeDateHeader(header: string): string | null {
     return `${slashMatch[3]}-${m}-${d}`;
   }
 
+  // Try YYYY-MM-DD already
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  // Try D-Mon-YY or DD-Mon-YY (e.g. "31-May-26", "1-Jun-26")
+  const months: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+  };
+  const dMonYYMatch = /^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/.exec(trimmed);
+  if (dMonYYMatch) {
+    const mon = months[dMonYYMatch[2].toLowerCase()];
+    if (mon) {
+      const day = dMonYYMatch[1].padStart(2, '0');
+      const yearShort = parseInt(dMonYYMatch[3], 10);
+      const year = yearShort >= 50 ? 1900 + yearShort : 2000 + yearShort;
+      return `${year}-${mon}-${day}`;
+    }
+  }
+
+  // Try D-Mon-YYYY or DD-Mon-YYYY (e.g. "31-May-2026", "1-Jun-2026")
+  const dMonYYYYMatch = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(trimmed);
+  if (dMonYYYYMatch) {
+    const mon = months[dMonYYYYMatch[2].toLowerCase()];
+    if (mon) {
+      const day = dMonYYYYMatch[1].padStart(2, '0');
+      return `${dMonYYYYMatch[3]}-${mon}-${day}`;
+    }
+  }
+
+  // Try D-Mon or DD-Mon without year (e.g. "31-May", "1-Jun") — infer current year
+  const dMonMatch = /^(\d{1,2})-([A-Za-z]{3})$/.exec(trimmed);
+  if (dMonMatch) {
+    const mon = months[dMonMatch[2].toLowerCase()];
+    if (mon) {
+      const day = dMonMatch[1].padStart(2, '0');
+      const year = new Date().getFullYear();
+      return `${year}-${mon}-${day}`;
+    }
+  }
 
   return null;
 }

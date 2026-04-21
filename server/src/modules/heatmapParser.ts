@@ -40,7 +40,7 @@ export function normalizeDate(dateStr: string): string | null {
 export function normalizeInterval(time: string): string | null {
   const trimmed = time.trim().toUpperCase();
 
-  const match24 = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  const match24 = /^(\d{1,2}):(\d{1,2})$/.exec(trimmed);
   if (match24) {
     const h = parseInt(match24[1], 10);
     const m = parseInt(match24[2], 10);
@@ -184,9 +184,16 @@ export function pivotDateToISO(header: string): string | null {
 
 /**
  * Converts a pivot-style interval (e.g. "0000", "0030", "1430") to HH:MM.
+ * Also accepts HH:MM format directly (e.g. "07:00", "7:00").
  */
 export function pivotIntervalToTime(interval: string): string | null {
   const trimmed = interval.trim();
+
+  // Try HH:MM or H:MM format first (from normalizeInterval)
+  const normalized = normalizeInterval(trimmed);
+  if (normalized) return normalized;
+
+  // Try 4-digit format (e.g. "0000", "0030", "1430")
   const match = /^(\d{2})(\d{2})$/.exec(trimmed);
   if (!match) return null;
   const h = parseInt(match[1], 10);
@@ -267,4 +274,103 @@ export function parseHeatmapCSV(csvString: string): ValidationResult<HeatmapRow>
   }
 
   return validateHeatmapRows(results.data as RawHeatmapRow[]);
+}
+
+/**
+ * Parses a D-Mon or DD-Mon date header (e.g., "31-May", "1-Jun") to YYYY-MM-DD.
+ * Infers year from referenceYear (defaults to current year).
+ * Handles Dec→Jan rollover: if the parsed month is more than 6 months before
+ * the reference month, assume next year.
+ */
+export function parseDateHeader(header: string, referenceYear?: number): string | null {
+  const months: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
+  const match = /^(\d{1,2})-([A-Za-z]{3})$/.exec(header.trim());
+  if (!match) return null;
+  const day = parseInt(match[1], 10);
+  const mon = months[match[2].toLowerCase()];
+  if (!mon) return null;
+  if (day < 1 || day > 31) return null;
+
+  const now = new Date();
+  let year = referenceYear ?? now.getFullYear();
+
+  // Handle Dec→Jan rollover: if the header month is Jan-Feb and current month is Nov-Dec,
+  // assume next year
+  const refMonth = now.getMonth() + 1; // 1-based
+  if (mon <= 2 && refMonth >= 11 && referenceYear === undefined) {
+    year += 1;
+  }
+
+  return `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Detects whether the CSV columns represent a pivot/crosstab format.
+ * Pivot format has Program + Interval columns but lacks Date and Over_Under_Value,
+ * and has date-like column headers (D-Mon pattern).
+ */
+export function detectPivotFormat(columns: string[]): { isPivot: boolean; dateColumns: string[] } {
+  const hasInterval = columns.some(c => c.trim() === 'Interval');
+  const hasDate = columns.some(c => c.trim() === 'Date');
+  const hasOverUnder = columns.some(c => c.trim() === 'Over_Under_Value');
+
+  if (!hasInterval || hasDate || hasOverUnder) {
+    return { isPivot: false, dateColumns: [] };
+  }
+
+  const dateColumns: string[] = [];
+  for (const col of columns) {
+    if (parseDateHeader(col.trim()) !== null) {
+      dateColumns.push(col);
+    }
+  }
+
+  return {
+    isPivot: dateColumns.length > 0,
+    dateColumns,
+  };
+}
+
+/**
+ * Transposes pivot-format rows into flat RawHeatmapRow records.
+ * For each row × each date column, produces one RawHeatmapRow with:
+ *   Date = parseDateHeader(dateColumnHeader)
+ *   Program = row.Program
+ *   Interval_Start_Time = row.Interval
+ *   Over_Under_Value = cell value
+ * Skips cells that are empty or whitespace-only.
+ */
+export function transposePivotRows(
+  rawRows: Record<string, string>[],
+  dateColumns: string[],
+  refYear?: number,
+): RawHeatmapRow[] {
+  const result: RawHeatmapRow[] = [];
+
+  for (const row of rawRows) {
+    const program = row['Program']?.trim() ?? '';
+    const lobby = row['Lobby']?.trim() ?? '';
+    const interval = row['Interval']?.trim() ?? '';
+
+    for (const dateCol of dateColumns) {
+      const cellValue = (row[dateCol] ?? '').trim();
+      if (cellValue === '') continue;
+
+      const parsedDate = parseDateHeader(dateCol.trim(), refYear);
+      if (!parsedDate) continue;
+
+      result.push({
+        Date: parsedDate,
+        Program: program,
+        Lobby: lobby,
+        Interval_Start_Time: interval,
+        Over_Under_Value: cellValue,
+      });
+    }
+  }
+
+  return result;
 }

@@ -41,7 +41,7 @@ def normalize_interval(time_str):
     """Normalizes a time string to HH:MM format (24-hour)."""
     trimmed = time_str.strip().upper()
 
-    m24 = re.match(r'^(\d{1,2}):(\d{2})$', trimmed)
+    m24 = re.match(r'^(\d{1,2}):(\d{1,2})$', trimmed)
     if m24:
         h = int(m24.group(1))
         mins = int(m24.group(2))
@@ -132,8 +132,17 @@ def _pivot_date_to_iso_simple(header):
 
 
 def pivot_interval_to_time(interval):
-    """Converts a pivot-style interval (e.g. '0000', '0030', '1430') to HH:MM."""
+    """Converts a pivot-style interval (e.g. '0000', '0030', '1430', '0:0', '1:30') to HH:MM.
+    Tries normalize_interval first to handle formats like '0:0', '1:30', then falls back
+    to the 4-digit format."""
     trimmed = interval.strip()
+
+    # Try normalize_interval first (handles "0:0", "1:30", "07:00", etc.)
+    normalized = normalize_interval(trimmed)
+    if normalized is not None:
+        return normalized
+
+    # Fall back to 4-digit format (e.g. '0000', '0030', '1430')
     m = re.match(r'^(\d{2})(\d{2})$', trimmed)
     if not m:
         return None

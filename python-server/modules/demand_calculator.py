@@ -401,7 +401,7 @@ def _identify_candidate_windows(shifts, program, interval_map):
                         'slot_key': k,
                     })
 
-        # WO agents → Full Day OT
+        # WO agents → Full Day OT (with shift-overlap filter)
         for shift in wo_agents:
             wo_count = agent_wo_ot_count.get(shift['agent'], 0)
             total_wo = len(agent_wo_days.get(shift['agent'], []))
@@ -412,18 +412,43 @@ def _identify_candidate_windows(shifts, program, interval_map):
             k = f"{date}|{shift['agent']}|fullday"
             if k in used_slot_keys:
                 continue
-            used_slot_keys.add(k)
 
-            rs = agent_regular_shift.get(shift['agent'], 'Full Day')
+            rs = agent_regular_shift.get(shift['agent'])
             agent_lobby = shift.get('lobby', '')
+
+            # Skip agents with no known regular shift
+            if not rs:
+                continue
 
             # Parse regular shift to get start/end indices
             start_idx = 0
             end_idx = 48
             rs_match = re.match(r'^(\d{2}:\d{2})-(\d{2}:\d{2})$', rs)
             if rs_match:
+                shift_si = _interval_index(rs_match.group(1))
+                shift_sei = _interval_index(rs_match.group(2))
+                if shift_sei <= shift_si:
+                    shift_sei += 48
+                # Check if any deficit exists in the shift's interval range
+                map_key = f"{date}|{program}|{agent_lobby}"
+                intervals = interval_map.get(map_key)
+                has_overlap = False
+                if intervals:
+                    for i in range(shift_si, shift_sei):
+                        actual_idx = i % 48
+                        time_str = ALL_INTERVALS[actual_idx]
+                        val = intervals.get(time_str)
+                        if val is not None and val < 0:
+                            has_overlap = True
+                            break
+                if not has_overlap:
+                    continue
                 start_idx = _interval_index(rs_match.group(1))
                 end_idx = _interval_index(rs_match.group(2))
+            else:
+                continue
+
+            used_slot_keys.add(k)
 
             candidates.append({
                 'date': date,
