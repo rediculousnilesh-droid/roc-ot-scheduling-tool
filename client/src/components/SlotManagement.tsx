@@ -776,7 +776,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
             <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.3rem', color: '#1e293b' }}>Heatmap Comparison</div>
               <ToleranceConfig value={tolerance} onChange={setTolerance} />
-              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} />
+              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} selectedProgram={selectedProgram} selectedLobby={selectedLobby} />
             </div>
           )}
           {filteredSlots.length === 0 && (

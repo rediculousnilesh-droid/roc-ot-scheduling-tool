@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { HeatmapRow } from '../types';
 import styles from './HeatmapGrid.module.css';
 
@@ -7,6 +7,8 @@ interface Props {
   title?: string;
   programs?: string[];
   lobbies?: string[];
+  initialProgram?: string;
+  initialLobby?: string;
 }
 
 function getCellColor(value: number): string {
@@ -28,12 +30,20 @@ function fmtDate(d: string): string {
   return `${parseInt(p[2])}-${months[parseInt(p[1]) - 1]}`;
 }
 
-export default function HeatmapGrid({ data, title, programs, lobbies }: Props) {
-  const [selectedProgram, setSelectedProgram] = useState('');
-  const [selectedLobby, setSelectedLobby] = useState('');
+export default function HeatmapGrid({ data, title, programs, lobbies, initialProgram, initialLobby }: Props) {
+  const [selectedProgram, setSelectedProgram] = useState(initialProgram || '');
+  const [selectedLobby, setSelectedLobby] = useState(initialLobby || '');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  useEffect(() => {
+    if (initialProgram !== undefined) setSelectedProgram(initialProgram);
+  }, [initialProgram]);
+
+  useEffect(() => {
+    if (initialLobby !== undefined) setSelectedLobby(initialLobby);
+  }, [initialLobby]);
 
   const allPrograms = useMemo(() => {
     if (programs?.length) return programs;
