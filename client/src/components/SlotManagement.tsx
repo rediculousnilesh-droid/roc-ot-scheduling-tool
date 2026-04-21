@@ -572,6 +572,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [msgType, setMsgType] = useState<'success' | 'error'>('success');
   const [loading, setLoading] = useState(false);
   const [generateCount, setGenerateCount] = useState(0);
+  const [hasGenerated, setHasGenerated] = useState(false);
   const [tolerance, setTolerance] = useState(-2);
 
   // Single shared OT demand computation — used by both the OTDemandTable and the heatmap
@@ -615,6 +616,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   // Reset lobby when program changes and lobby is no longer valid
   const handleProgramChange = (prog: string) => {
     setSelectedProgram(prog);
+    setHasGenerated(false);
     let newLobby = selectedLobby;
     if (selectedLobby) {
       const newLobbies = prog
@@ -693,6 +695,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
       const res = await api.generateSlots(selectedProgram, tolerance);
       showMsg(`Generated ${res.generated} slots for ${selectedProgram}`, 'success');
       setGenerateCount((c) => c + 1);
+      setHasGenerated(true);
       if (onRefresh) onRefresh();
     } catch (err: unknown) {
       showMsg(err instanceof Error ? err.message : 'Generation failed', 'error');
@@ -737,12 +740,12 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
           {programs.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
         {filteredLobbies.length > 0 && (
-          <select value={selectedLobby} onChange={(e) => { setSelectedLobby(e.target.value); if (onSelectionChange) onSelectionChange(selectedProgram, e.target.value, selectedWeek); }}>
+          <select value={selectedLobby} onChange={(e) => { setSelectedLobby(e.target.value); setHasGenerated(false); if (onSelectionChange) onSelectionChange(selectedProgram, e.target.value, selectedWeek); }}>
             <option value="">All Lobbies</option>
             {filteredLobbies.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         )}
-        <select value={selectedWeek} onChange={(e) => { setSelectedWeek(e.target.value); if (onSelectionChange) onSelectionChange(selectedProgram, selectedLobby, e.target.value); }}>
+        <select value={selectedWeek} onChange={(e) => { setSelectedWeek(e.target.value); setHasGenerated(false); if (onSelectionChange) onSelectionChange(selectedProgram, selectedLobby, e.target.value); }}>
           <option value="">Select Week</option>
           {weeks.map((w) => (
             <option key={w.key} value={w.key}>Week {w.weekNum} ({w.label})</option>
@@ -769,19 +772,19 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
         </div>
       ) : (
         <>
-          {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable dates={otDemand.dates} rows={otDemand.rows} demandMap={otDemand.demandMap} animKey={generateCount} />}
-          {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} allDates={heatmap ? [...new Set(heatmap.map(r => r.date))] : undefined} />}
-          <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
-          {heatmap && heatmap.length > 0 && (
+          {hasGenerated && selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable dates={otDemand.dates} rows={otDemand.rows} demandMap={otDemand.demandMap} animKey={generateCount} />}
+          {hasGenerated && filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} allDates={heatmap ? [...new Set(heatmap.map(r => r.date))] : undefined} />}
+          {hasGenerated && <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />}
+          {hasGenerated && heatmap && heatmap.length > 0 && (
             <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.3rem', color: '#1e293b' }}>Heatmap Comparison</div>
               <ToleranceConfig value={tolerance} onChange={setTolerance} />
               <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} selectedProgram={selectedProgram} selectedLobby={selectedLobby} />
             </div>
           )}
-          {filteredSlots.length === 0 && (
+          {!hasGenerated && (
             <div style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8', fontSize: '0.85rem' }}>
-              No OT slots for this selection.
+              Click "Auto-Generate OT Slots" to view OT analysis and heatmaps.
             </div>
           )}
         </>
