@@ -471,19 +471,18 @@ def _identify_candidate_windows(shifts, program, interval_map):
 
 
 def _compute_revised_heatmap_from_windows(original_data, windows):
-    """Compute revised heatmap by adding +1 per recommendation to each interval
-    covered by qualifying windows. Each recommendation represents one person
-    covering that OT window."""
-    # Build a map of adjustments: "date|program|lobby|interval" → headcount to add
-    # Each window/recommendation = 1 person covering those intervals
+    """Compute revised heatmap by adding headcount per recommendation to each interval
+    covered by qualifying windows. Uses effectiveDemand to represent how many HC
+    each window covers."""
     adjustments = {}
 
     for w in windows:
+        demand = w.get('effective_demand', 1)
         for i in range(w['start_idx'], w['end_idx']):
             actual_idx = i % 48
             time_str = ALL_INTERVALS[actual_idx]
             key = f"{w['date']}|{w['program']}|{w['lobby']}|{time_str}"
-            adjustments[key] = adjustments.get(key, 0) + 1
+            adjustments[key] = adjustments.get(key, 0) + demand
 
     result = []
     for row in original_data:
