@@ -266,8 +266,8 @@ function OTDemandTable({ heatmap, shifts, program, animKey, tolerance }: { heatm
 }
 
 /** Pivot table: OT Type × Shift rows, Date columns, count values */
-function OTPivotTable({ slots, shifts, animKey }: { slots: OTSlot[]; shifts: ShiftEntry[]; animKey: number }) {
-  const dates = useMemo(() => [...new Set(slots.map(s => s.date))].sort(), [slots]);
+function OTPivotTable({ slots, shifts, animKey, allDates }: { slots: OTSlot[]; shifts: ShiftEntry[]; animKey: number; allDates?: string[] }) {
+  const dates = useMemo(() => allDates ? [...allDates].sort() : [...new Set(slots.map(s => s.date))].sort(), [slots, allDates]);
   const otTypeOrder = ['1hr Pre Shift OT', '1hr Post Shift OT', '2hr Pre Shift OT', '2hr Post Shift OT', 'Full Day OT'];
 
   const { rows, countMap } = useMemo(() => {
@@ -780,7 +780,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
       ) : (
         <>
           {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable heatmap={heatmap} shifts={shifts} program={selectedProgram} animKey={generateCount} tolerance={tolerance} />}
-          {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} />}
+          {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} allDates={heatmap ? [...new Set(heatmap.map(r => r.date))] : undefined} />}
           <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
           {heatmap && heatmap.length > 0 && (
             <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
