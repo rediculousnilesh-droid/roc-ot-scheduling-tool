@@ -484,16 +484,15 @@ function computeRevisedHeatmapFromWindows(
   originalData: HeatmapRow[],
   windows: Array<{ date: string; program: string; lobby: string; startIdx: number; endIdx: number; effectiveDemand: number }>,
 ): HeatmapRow[] {
-  // Build a map of adjustments: "date|program|lobby|interval" → headcount to add
-  // Each window/recommendation = 1 person covering those intervals
   const adjustments = new Map<string, number>();
 
   for (const w of windows) {
+    const demand = w.effectiveDemand ?? 1;
     for (let i = w.startIdx; i < w.endIdx; i++) {
       const actualIdx = i % 48;
       const time = ALL_INTERVALS[actualIdx];
       const key = `${w.date}|${w.program}|${w.lobby}|${time}`;
-      adjustments.set(key, (adjustments.get(key) ?? 0) + 1);
+      adjustments.set(key, (adjustments.get(key) ?? 0) + demand);
     }
   }
 
