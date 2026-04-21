@@ -8,6 +8,14 @@ import FillRateHeatmap from './FillRateHeatmap';
 import ToleranceConfig from './ToleranceConfig';
 import styles from './SlotManagement.module.css';
 
+/** Result of the shared OT demand computation */
+interface OTDemandResult {
+  dates: string[];
+  rows: { otType: string; shift: string }[];
+  demandMap: Map<string, number>;
+  adjustments: Map<string, number>;
+}
+
 interface Props {
   slots: OTSlot[];
   shifts: ShiftEntry[];
@@ -47,155 +55,180 @@ function intervalIdx(t: string): number {
   return h * 2 + (m >= 30 ? 1 : 0);
 }
 
+/**
+ * Shared OT demand computation. Produces both the table data (demandMap, rows, dates)
+ * AND the interval-level adjustments for the heatmap, from a single pass of logic.
+ * This guarantees the After Demand OT heatmap exactly matches the OT Demand table numbers.
+ */
+function computeOTDemand(heatmap: HeatmapRow[], shifts: ShiftEntry[], program: string, tolerance: number): OTDemandResult {
+  const empty: OTDemandResult = { dates: [], rows: [], demandMap: new Map(), adjustments: new Map() };
+  if (!heatmap?.length || !shifts?.length) return empty;
+
+  const tol = tolerance ?? -2;
+
+  // Get heatmap for this program
+  const hmByDate = new Map<string, Map<number, number>>();
+  const allDates = new Set<string>();
+  for (const r of heatmap) {
+    if (r.program !== program) continue;
+    allDates.add(r.date);
+    if (!hmByDate.has(r.date)) hmByDate.set(r.date, new Map());
+    const idx = intervalIdx(r.intervalStartTime);
+    const existing = hmByDate.get(r.date)!.get(idx) ?? 0;
+    hmByDate.get(r.date)!.set(idx, existing + r.overUnderValue);
+  }
+  const dates = [...allDates].sort();
+
+  // Get unique shift patterns (from working agents)
+  const shiftPatterns = new Set<string>();
+  for (const s of shifts) {
+    if (s.program !== program || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
+    shiftPatterns.add(`${s.shiftStart}-${s.shiftEnd}`);
+  }
+
+  // Get WO agents' regular shift patterns (for Full Day OT)
+  const agentRegularShift = new Map<string, string>();
+  for (const s of shifts) {
+    if (!s.isWeeklyOff && s.shiftStart && s.shiftEnd && !agentRegularShift.has(s.agent)) {
+      agentRegularShift.set(s.agent, `${s.shiftStart}-${s.shiftEnd}`);
+    }
+  }
+  const woShiftPatterns = new Set<string>();
+  for (const s of shifts) {
+    if (s.program !== program || !s.isWeeklyOff) continue;
+    const rs = agentRegularShift.get(s.agent);
+    if (rs) woShiftPatterns.add(rs);
+  }
+
+  const demandMap = new Map<string, number>();
+  const adjustments = new Map<string, number>();
+  const rowSet = new Map<string, Set<string>>();
+  const otTypeOrder = ['2hr Pre Shift OT', '1hr Pre Shift OT', '2hr Post Shift OT', '1hr Post Shift OT', 'Full Day OT'];
+
+  // Tolerance budget: max 2 intervals per shift|day|program can use tolerance
+  const toleranceBudget = new Map<string, number>();
+
+  /** Add demand HC to the adjustments map for a range of interval indices on a given date */
+  const addAdjustments = (date: string, fromIdx: number, toIdx: number, demand: number) => {
+    for (let i = fromIdx; i < toIdx; i++) {
+      const h = String(Math.floor(i / 2)).padStart(2, '0');
+      const m = i % 2 === 0 ? '00' : '30';
+      const key = `${date}|${h}:${m}`;
+      adjustments.set(key, (adjustments.get(key) ?? 0) + demand);
+    }
+  };
+
+  for (const date of dates) {
+    const intervals = hmByDate.get(date);
+    if (!intervals) continue;
+
+    for (const sp of shiftPatterns) {
+      const [startStr, endStr] = sp.split('-');
+      const ssi = intervalIdx(startStr);
+      const sei = intervalIdx(endStr);
+      const budgetKey = `${sp}|${date}|${program}`;
+
+      // 2hr Pre Shift: compute average deficit across 4 intervals before shift
+      const pre2Start = Math.max(ssi - 4, 0);
+      const preCount = ssi - pre2Start;
+      let preSum = 0;
+      let preDataCount = 0;
+      for (let i = pre2Start; i < ssi; i++) {
+        const val = intervals.get(i);
+        if (val !== undefined) { preSum += val; preDataCount++; }
+      }
+      if (preDataCount > 0) {
+        const avgDeficit = preSum / preDataCount;
+        const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
+        const effectiveTol = usedBudget >= 2 ? 0 : tol;
+        if (avgDeficit < effectiveTol) {
+          const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
+          const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
+          const key = `${otType}|${sp}|${date}`;
+          demandMap.set(key, effectiveDemand);
+          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+          rowSet.get(otType)!.add(sp);
+          const tolUsed = effectiveTol !== 0 ? Math.min(preDataCount, 2 - usedBudget) : 0;
+          toleranceBudget.set(budgetKey, usedBudget + tolUsed);
+          // Add adjustments for the pre-shift intervals
+          addAdjustments(date, pre2Start, ssi, effectiveDemand);
+        }
+      }
+
+      // 2hr Post Shift: compute average deficit across 4 intervals after shift
+      const post2End = Math.min(sei + 4, 48);
+      const postCount = post2End - sei;
+      let postSum = 0;
+      let postDataCount = 0;
+      for (let i = sei; i < post2End; i++) {
+        const val = intervals.get(i);
+        if (val !== undefined) { postSum += val; postDataCount++; }
+      }
+      if (postDataCount > 0) {
+        const avgDeficit = postSum / postDataCount;
+        const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
+        const effectiveTol = usedBudget >= 2 ? 0 : tol;
+        if (avgDeficit < effectiveTol) {
+          const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
+          const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
+          const key = `${otType}|${sp}|${date}`;
+          demandMap.set(key, effectiveDemand);
+          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+          rowSet.get(otType)!.add(sp);
+          const tolUsed = effectiveTol !== 0 ? Math.min(postDataCount, 2 - usedBudget) : 0;
+          toleranceBudget.set(budgetKey, usedBudget + tolUsed);
+          // Add adjustments for the post-shift intervals
+          addAdjustments(date, sei, post2End, effectiveDemand);
+        }
+      }
+    }
+
+    // Full Day OT: for WO agents' regular shift patterns, check if there are 4+ consecutive
+    // deficit intervals below tolerance during that shift window.
+    for (const sp of woShiftPatterns) {
+      const [startStr, endStr] = sp.split('-');
+      const ssi = intervalIdx(startStr);
+      const sei = intervalIdx(endStr);
+
+      let consecDeficit = 0;
+      let maxConsec = 0;
+      let midDeficitTotal = 0;
+      let midDeficitCount = 0;
+      for (let i = ssi; i < sei; i++) {
+        const val = intervals.get(i) ?? 0;
+        if (val < tol) {
+          consecDeficit++;
+          midDeficitTotal += Math.abs(val - tol);
+          midDeficitCount++;
+          if (consecDeficit > maxConsec) maxConsec = consecDeficit;
+        } else {
+          consecDeficit = 0;
+        }
+      }
+      if (maxConsec >= 4) {
+        const demand = midDeficitCount > 0 ? Math.ceil(midDeficitTotal / midDeficitCount) : 1;
+        const key = `Full Day OT|${sp}|${date}`;
+        demandMap.set(key, demand);
+        if (!rowSet.has('Full Day OT')) rowSet.set('Full Day OT', new Set());
+        rowSet.get('Full Day OT')!.add(sp);
+        // Add adjustments for the full shift window
+        addAdjustments(date, ssi, sei, demand);
+      }
+    }
+  }
+
+  const rows: { otType: string; shift: string }[] = [];
+  for (const ot of otTypeOrder) {
+    const shiftsForType = rowSet.get(ot);
+    if (!shiftsForType) continue;
+    for (const shift of [...shiftsForType].sort()) rows.push({ otType: ot, shift });
+  }
+
+  return { dates, rows, demandMap, adjustments };
+}
+
 /** OT Demand Analysis — shows theoretical OT need from heatmap deficit, independent of headcount */
-function OTDemandTable({ heatmap, shifts, program, animKey, tolerance }: { heatmap: HeatmapRow[]; shifts: ShiftEntry[]; program: string; animKey: number; tolerance: number }) {
-  const { dates, rows, demandMap } = useMemo(() => {
-    if (!heatmap?.length || !shifts?.length) return { dates: [] as string[], rows: [] as { otType: string; shift: string }[], demandMap: new Map<string, number>() };
-
-    const tol = tolerance ?? -2;
-
-    // Get heatmap for this program
-    const hmByDate = new Map<string, Map<number, number>>();
-    const allDates = new Set<string>();
-    for (const r of heatmap) {
-      if (r.program !== program) continue;
-      allDates.add(r.date);
-      if (!hmByDate.has(r.date)) hmByDate.set(r.date, new Map());
-      const idx = intervalIdx(r.intervalStartTime);
-      const existing = hmByDate.get(r.date)!.get(idx) ?? 0;
-      hmByDate.get(r.date)!.set(idx, existing + r.overUnderValue);
-    }
-    const dates = [...allDates].sort();
-
-    // Get unique shift patterns (from working agents)
-    const shiftPatterns = new Set<string>();
-    for (const s of shifts) {
-      if (s.program !== program || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
-      shiftPatterns.add(`${s.shiftStart}-${s.shiftEnd}`);
-    }
-
-    // Get WO agents' regular shift patterns (for Full Day OT)
-    const agentRegularShift = new Map<string, string>();
-    for (const s of shifts) {
-      if (!s.isWeeklyOff && s.shiftStart && s.shiftEnd && !agentRegularShift.has(s.agent)) {
-        agentRegularShift.set(s.agent, `${s.shiftStart}-${s.shiftEnd}`);
-      }
-    }
-    const woShiftPatterns = new Set<string>();
-    for (const s of shifts) {
-      if (s.program !== program || !s.isWeeklyOff) continue;
-      const rs = agentRegularShift.get(s.agent);
-      if (rs) woShiftPatterns.add(rs);
-    }
-
-    const demandMap = new Map<string, number>();
-    const rowSet = new Map<string, Set<string>>();
-    const otTypeOrder = ['2hr Pre Shift OT', '1hr Pre Shift OT', '2hr Post Shift OT', '1hr Post Shift OT', 'Full Day OT'];
-
-    // Tolerance budget: max 2 intervals per shift|day|program can use tolerance
-    const toleranceBudget = new Map<string, number>();
-
-    for (const date of dates) {
-      const intervals = hmByDate.get(date);
-      if (!intervals) continue;
-
-      for (const sp of shiftPatterns) {
-        const [startStr, endStr] = sp.split('-');
-        const ssi = intervalIdx(startStr);
-        const sei = intervalIdx(endStr);
-        const budgetKey = `${sp}|${date}|${program}`;
-
-        // 2hr Pre Shift: compute average deficit across 4 intervals before shift
-        const pre2Start = Math.max(ssi - 4, 0);
-        const preCount = ssi - pre2Start;
-        let preSum = 0;
-        let preDataCount = 0;
-        for (let i = pre2Start; i < ssi; i++) {
-          const val = intervals.get(i);
-          if (val !== undefined) { preSum += val; preDataCount++; }
-        }
-        if (preDataCount > 0) {
-          const avgDeficit = preSum / preDataCount;
-          const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
-          const effectiveTol = usedBudget >= 2 ? 0 : tol;
-          if (avgDeficit < effectiveTol) {
-            const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
-            const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
-            const key = `${otType}|${sp}|${date}`;
-            demandMap.set(key, effectiveDemand);
-            if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-            rowSet.get(otType)!.add(sp);
-            const tolUsed = effectiveTol !== 0 ? Math.min(preDataCount, 2 - usedBudget) : 0;
-            toleranceBudget.set(budgetKey, usedBudget + tolUsed);
-          }
-        }
-
-        // 2hr Post Shift: compute average deficit across 4 intervals after shift
-        const post2End = Math.min(sei + 4, 48);
-        const postCount = post2End - sei;
-        let postSum = 0;
-        let postDataCount = 0;
-        for (let i = sei; i < post2End; i++) {
-          const val = intervals.get(i);
-          if (val !== undefined) { postSum += val; postDataCount++; }
-        }
-        if (postDataCount > 0) {
-          const avgDeficit = postSum / postDataCount;
-          const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
-          const effectiveTol = usedBudget >= 2 ? 0 : tol;
-          if (avgDeficit < effectiveTol) {
-            const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
-            const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
-            const key = `${otType}|${sp}|${date}`;
-            demandMap.set(key, effectiveDemand);
-            if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-            rowSet.get(otType)!.add(sp);
-            const tolUsed = effectiveTol !== 0 ? Math.min(postDataCount, 2 - usedBudget) : 0;
-            toleranceBudget.set(budgetKey, usedBudget + tolUsed);
-          }
-        }
-      }
-
-      // Full Day OT: for WO agents' regular shift patterns, check if there are 4+ consecutive
-      // deficit intervals below tolerance during that shift window.
-      for (const sp of woShiftPatterns) {
-        const [startStr, endStr] = sp.split('-');
-        const ssi = intervalIdx(startStr);
-        const sei = intervalIdx(endStr);
-
-        let consecDeficit = 0;
-        let maxConsec = 0;
-        let midDeficitTotal = 0;
-        let midDeficitCount = 0;
-        for (let i = ssi; i < sei; i++) {
-          const val = intervals.get(i) ?? 0;
-          if (val < tol) {
-            consecDeficit++;
-            midDeficitTotal += Math.abs(val - tol);
-            midDeficitCount++;
-            if (consecDeficit > maxConsec) maxConsec = consecDeficit;
-          } else {
-            consecDeficit = 0;
-          }
-        }
-        if (maxConsec >= 4) {
-          const key = `Full Day OT|${sp}|${date}`;
-          demandMap.set(key, midDeficitCount > 0 ? Math.ceil(midDeficitTotal / midDeficitCount) : 1);
-          if (!rowSet.has('Full Day OT')) rowSet.set('Full Day OT', new Set());
-          rowSet.get('Full Day OT')!.add(sp);
-        }
-      }
-    }
-
-    const rows: { otType: string; shift: string }[] = [];
-    for (const ot of otTypeOrder) {
-      const shiftsForType = rowSet.get(ot);
-      if (!shiftsForType) continue;
-      for (const shift of [...shiftsForType].sort()) rows.push({ otType: ot, shift });
-    }
-
-    return { dates, rows, demandMap };
-  }, [heatmap, shifts, program, tolerance]);
+function OTDemandTable({ dates, rows, demandMap, animKey }: { dates: string[]; rows: { otType: string; shift: string }[]; demandMap: Map<string, number>; animKey: number }) {
 
   if (!rows.length) return null;
 
@@ -541,131 +574,18 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [generateCount, setGenerateCount] = useState(0);
   const [tolerance, setTolerance] = useState(-2);
 
-  // Compute demand-based revised heatmap: applies the OT Demand table numbers
-  // to the original heatmap. For each OT type/shift/date in the demand table,
-  // adds the demand headcount to the intervals covered by that OT window.
+  // Single shared OT demand computation — used by both the OTDemandTable and the heatmap
+  const otDemand = useMemo(() => {
+    if (!heatmap?.length || !shifts?.length || !selectedProgram) {
+      return { dates: [], rows: [], demandMap: new Map<string, number>(), adjustments: new Map<string, number>() } as OTDemandResult;
+    }
+    return computeOTDemand(heatmap, shifts, selectedProgram, tolerance);
+  }, [heatmap, shifts, selectedProgram, tolerance]);
+
+  // Apply the demand adjustments to the heatmap
   const demandRevisedHeatmap = useMemo(() => {
-    if (!heatmap?.length || !shifts?.length || !selectedProgram) return [];
-
-    const tol = tolerance ?? -2;
-
-    // Replicate the OT Demand table logic to get demandMap
-    const hmByDate = new Map<string, Map<number, number>>();
-    const allDates = new Set<string>();
-    for (const r of heatmap) {
-      if (r.program !== selectedProgram) continue;
-      allDates.add(r.date);
-      if (!hmByDate.has(r.date)) hmByDate.set(r.date, new Map());
-      const idx = intervalIdx(r.intervalStartTime);
-      const existing = hmByDate.get(r.date)!.get(idx) ?? 0;
-      hmByDate.get(r.date)!.set(idx, existing + r.overUnderValue);
-    }
-
-    const shiftPatterns = new Set<string>();
-    for (const s of shifts) {
-      if (s.program !== selectedProgram || s.isWeeklyOff || !s.shiftStart || !s.shiftEnd) continue;
-      shiftPatterns.add(`${s.shiftStart}-${s.shiftEnd}`);
-    }
-
-    // WO shift patterns for Full Day OT
-    const agentRegularShift = new Map<string, string>();
-    for (const s of shifts) {
-      if (!s.isWeeklyOff && s.shiftStart && s.shiftEnd && !agentRegularShift.has(s.agent)) {
-        agentRegularShift.set(s.agent, `${s.shiftStart}-${s.shiftEnd}`);
-      }
-    }
-    const woShiftPatterns = new Set<string>();
-    for (const s of shifts) {
-      if (s.program !== selectedProgram || !s.isWeeklyOff) continue;
-      const rs = agentRegularShift.get(s.agent);
-      if (rs) woShiftPatterns.add(rs);
-    }
-
-    // Build adjustment map: "date|interval" → total HC to add
-    const adjustments = new Map<string, number>();
-    const toleranceBudget = new Map<string, number>();
-
-    for (const date of allDates) {
-      const intervals = hmByDate.get(date);
-      if (!intervals) continue;
-
-      for (const sp of shiftPatterns) {
-        const [startStr, endStr] = sp.split('-');
-        const ssi = intervalIdx(startStr);
-        const sei = intervalIdx(endStr);
-        const budgetKey = `${sp}|${date}|${selectedProgram}`;
-
-        // Pre shift
-        const pre2Start = Math.max(ssi - 4, 0);
-        let preSum = 0, preCount = 0;
-        for (let i = pre2Start; i < ssi; i++) {
-          const val = intervals.get(i);
-          if (val !== undefined) { preSum += val; preCount++; }
-        }
-        if (preCount > 0) {
-          const avg = preSum / preCount;
-          const used = toleranceBudget.get(budgetKey) ?? 0;
-          const effTol = used >= 2 ? 0 : tol;
-          if (avg < effTol) {
-            const demand = Math.ceil(Math.abs(avg - effTol));
-            for (let i = pre2Start; i < ssi; i++) {
-              const h = String(Math.floor(i / 2)).padStart(2, '0');
-              const m = i % 2 === 0 ? '00' : '30';
-              const key = `${date}|${h}:${m}`;
-              adjustments.set(key, (adjustments.get(key) ?? 0) + demand);
-            }
-            toleranceBudget.set(budgetKey, used + Math.min(preCount, 2 - used));
-          }
-        }
-
-        // Post shift
-        const post2End = Math.min(sei + 4, 48);
-        let postSum = 0, postCount = 0;
-        for (let i = sei; i < post2End; i++) {
-          const val = intervals.get(i);
-          if (val !== undefined) { postSum += val; postCount++; }
-        }
-        if (postCount > 0) {
-          const avg = postSum / postCount;
-          const used = toleranceBudget.get(budgetKey) ?? 0;
-          const effTol = used >= 2 ? 0 : tol;
-          if (avg < effTol) {
-            const demand = Math.ceil(Math.abs(avg - effTol));
-            for (let i = sei; i < post2End; i++) {
-              const h = String(Math.floor(i / 2)).padStart(2, '0');
-              const m = i % 2 === 0 ? '00' : '30';
-              const key = `${date}|${h}:${m}`;
-              adjustments.set(key, (adjustments.get(key) ?? 0) + demand);
-            }
-            toleranceBudget.set(budgetKey, used + Math.min(postCount, 2 - used));
-          }
-        }
-      }
-
-      // Full Day OT from WO shift patterns
-      for (const sp of woShiftPatterns) {
-        const [startStr, endStr] = sp.split('-');
-        const ssi = intervalIdx(startStr);
-        const sei = intervalIdx(endStr);
-        let consecDeficit = 0, maxConsec = 0, midTotal = 0, midCount = 0;
-        for (let i = ssi; i < sei; i++) {
-          const val = intervals.get(i) ?? 0;
-          if (val < tol) { consecDeficit++; midTotal += Math.abs(val - tol); midCount++; if (consecDeficit > maxConsec) maxConsec = consecDeficit; }
-          else { consecDeficit = 0; }
-        }
-        if (maxConsec >= 4) {
-          const demand = midCount > 0 ? Math.ceil(midTotal / midCount) : 1;
-          for (let i = ssi; i < sei; i++) {
-            const h = String(Math.floor(i / 2)).padStart(2, '0');
-            const m = i % 2 === 0 ? '00' : '30';
-            const key = `${date}|${h}:${m}`;
-            adjustments.set(key, (adjustments.get(key) ?? 0) + demand);
-          }
-        }
-      }
-    }
-
-    // Apply adjustments to heatmap
+    if (!heatmap?.length || !selectedProgram) return [];
+    const { adjustments } = otDemand;
     return heatmap.map(r => {
       if (r.program !== selectedProgram) return r;
       const key = `${r.date}|${r.intervalStartTime}`;
@@ -673,7 +593,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
       if (adj > 0) return { ...r, overUnderValue: r.overUnderValue + adj };
       return r;
     });
-  }, [heatmap, shifts, selectedProgram, tolerance]);
+  }, [heatmap, selectedProgram, otDemand]);
 
   const showMsg = (text: string, type: 'success' | 'error') => {
     setMessage(text); setMsgType(type);
@@ -849,7 +769,7 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
         </div>
       ) : (
         <>
-          {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable heatmap={heatmap} shifts={shifts} program={selectedProgram} animKey={generateCount} tolerance={tolerance} />}
+          {selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable dates={otDemand.dates} rows={otDemand.rows} demandMap={otDemand.demandMap} animKey={generateCount} />}
           {filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} allDates={heatmap ? [...new Set(heatmap.map(r => r.date))] : undefined} />}
           <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />
           {heatmap && heatmap.length > 0 && (
