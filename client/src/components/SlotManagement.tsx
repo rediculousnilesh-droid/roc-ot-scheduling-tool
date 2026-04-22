@@ -128,44 +128,98 @@ function computeOTDemand(heatmap: HeatmapRow[], shifts: ShiftEntry[], program: s
       const sei = intervalIdx(endStr);
       const budgetKey = `${sp}|${date}|${program}`;
 
-      // 2hr Pre Shift: check if any interval before shift has deficit below tolerance
+      // Pre Shift: check 1hr window first (closer to shift), then 2hr if further intervals also have deficit
+      const pre1Start = Math.max(ssi - 2, 0);
       const pre2Start = Math.max(ssi - 4, 0);
-      const preCount = ssi - pre2Start;
-      let preMinDeficit = 0;
-      let preDataCount = 0;
-      let preHasDeficit = false;
+      
+      // Check 1hr window (2 intervals before shift)
+      let pre1HasDeficit = false;
+      let pre1MinDeficit = 0;
+      let pre1Count = 0;
+      for (let i = pre1Start; i < ssi; i++) {
+        const val = intervals.get(i);
+        if (val !== undefined) { pre1Count++; if (val < pre1MinDeficit) pre1MinDeficit = val; if (val < tol) pre1HasDeficit = true; }
+      }
+      
+      // Check extended 2hr window (4 intervals before shift)
+      let pre2HasDeficit = false;
+      let pre2MinDeficit = 0;
+      let pre2Count = 0;
       for (let i = pre2Start; i < ssi; i++) {
         const val = intervals.get(i);
-        if (val !== undefined) { preDataCount++; if (val < preMinDeficit) preMinDeficit = val; if (val < tol) preHasDeficit = true; }
+        if (val !== undefined) { pre2Count++; if (val < pre2MinDeficit) pre2MinDeficit = val; if (val < tol) pre2HasDeficit = true; }
       }
-      if (preDataCount > 0 && preHasDeficit) {
-        const effectiveDemand = Math.ceil(Math.abs(preMinDeficit));
-        const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
-        const key = `${otType}|${sp}|${date}`;
+      
+      // Check if the further 2 intervals (beyond 1hr) also have deficit
+      let preFarHasDeficit = false;
+      for (let i = pre2Start; i < pre1Start; i++) {
+        const val = intervals.get(i);
+        if (val !== undefined && val < tol) { preFarHasDeficit = true; break; }
+      }
+      
+      if (pre2Count > 0 && pre2HasDeficit && preFarHasDeficit && pre2Start < pre1Start) {
+        // 2hr pre-shift: deficit in both near and far intervals
+        const effectiveDemand = Math.ceil(Math.abs(pre2MinDeficit));
+        const key = `2hr Pre Shift OT|${sp}|${date}`;
         demandMap.set(key, effectiveDemand);
-        if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-        rowSet.get(otType)!.add(sp);
+        if (!rowSet.has('2hr Pre Shift OT')) rowSet.set('2hr Pre Shift OT', new Set());
+        rowSet.get('2hr Pre Shift OT')!.add(sp);
         addAdjustments(date, pre2Start, ssi, effectiveDemand);
+      } else if (pre1Count > 0 && pre1HasDeficit) {
+        // 1hr pre-shift: deficit only in near intervals
+        const effectiveDemand = Math.ceil(Math.abs(pre1MinDeficit));
+        const key = `1hr Pre Shift OT|${sp}|${date}`;
+        demandMap.set(key, effectiveDemand);
+        if (!rowSet.has('1hr Pre Shift OT')) rowSet.set('1hr Pre Shift OT', new Set());
+        rowSet.get('1hr Pre Shift OT')!.add(sp);
+        addAdjustments(date, pre1Start, ssi, effectiveDemand);
       }
 
-      // 2hr Post Shift: check if any interval after shift has deficit below tolerance
+      // Post Shift: check 1hr window first (closer to shift), then 2hr if further intervals also have deficit
+      const post1End = Math.min(sei + 2, 48);
       const post2End = Math.min(sei + 4, 48);
-      const postCount = post2End - sei;
-      let postMinDeficit = 0;
-      let postDataCount = 0;
-      let postHasDeficit = false;
+      
+      // Check 1hr window (2 intervals after shift)
+      let post1HasDeficit = false;
+      let post1MinDeficit = 0;
+      let post1Count = 0;
+      for (let i = sei; i < post1End; i++) {
+        const val = intervals.get(i);
+        if (val !== undefined) { post1Count++; if (val < post1MinDeficit) post1MinDeficit = val; if (val < tol) post1HasDeficit = true; }
+      }
+      
+      // Check extended 2hr window (4 intervals after shift)
+      let post2HasDeficit = false;
+      let post2MinDeficit = 0;
+      let post2Count = 0;
       for (let i = sei; i < post2End; i++) {
         const val = intervals.get(i);
-        if (val !== undefined) { postDataCount++; if (val < postMinDeficit) postMinDeficit = val; if (val < tol) postHasDeficit = true; }
+        if (val !== undefined) { post2Count++; if (val < post2MinDeficit) post2MinDeficit = val; if (val < tol) post2HasDeficit = true; }
       }
-      if (postDataCount > 0 && postHasDeficit) {
-        const effectiveDemand = Math.ceil(Math.abs(postMinDeficit));
-        const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
-        const key = `${otType}|${sp}|${date}`;
+      
+      // Check if the further 2 intervals (beyond 1hr) also have deficit
+      let postFarHasDeficit = false;
+      for (let i = post1End; i < post2End; i++) {
+        const val = intervals.get(i);
+        if (val !== undefined && val < tol) { postFarHasDeficit = true; break; }
+      }
+      
+      if (post2Count > 0 && post2HasDeficit && postFarHasDeficit && post1End < post2End) {
+        // 2hr post-shift: deficit in both near and far intervals
+        const effectiveDemand = Math.ceil(Math.abs(post2MinDeficit));
+        const key = `2hr Post Shift OT|${sp}|${date}`;
         demandMap.set(key, effectiveDemand);
-        if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-        rowSet.get(otType)!.add(sp);
+        if (!rowSet.has('2hr Post Shift OT')) rowSet.set('2hr Post Shift OT', new Set());
+        rowSet.get('2hr Post Shift OT')!.add(sp);
         addAdjustments(date, sei, post2End, effectiveDemand);
+      } else if (post1Count > 0 && post1HasDeficit) {
+        // 1hr post-shift: deficit only in near intervals
+        const effectiveDemand = Math.ceil(Math.abs(post1MinDeficit));
+        const key = `1hr Post Shift OT|${sp}|${date}`;
+        demandMap.set(key, effectiveDemand);
+        if (!rowSet.has('1hr Post Shift OT')) rowSet.set('1hr Post Shift OT', new Set());
+        rowSet.get('1hr Post Shift OT')!.add(sp);
+        addAdjustments(date, sei, post1End, effectiveDemand);
       }
     }
 
