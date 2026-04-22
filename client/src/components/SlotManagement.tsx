@@ -131,44 +131,40 @@ function computeOTDemand(heatmap: HeatmapRow[], shifts: ShiftEntry[], program: s
       // 2hr Pre Shift: check if any interval before shift has deficit below tolerance
       const pre2Start = Math.max(ssi - 4, 0);
       const preCount = ssi - pre2Start;
-      let preSum = 0;
+      let preMinDeficit = 0;
       let preDataCount = 0;
       let preHasDeficit = false;
       for (let i = pre2Start; i < ssi; i++) {
         const val = intervals.get(i);
-        if (val !== undefined) { preSum += val; preDataCount++; if (val < tol) preHasDeficit = true; }
+        if (val !== undefined) { preDataCount++; if (val < preMinDeficit) preMinDeficit = val; if (val < tol) preHasDeficit = true; }
       }
       if (preDataCount > 0 && preHasDeficit) {
-        const avgDeficit = preSum / preDataCount;
-        const effectiveDemand = Math.ceil(Math.abs(avgDeficit));
+        const effectiveDemand = Math.ceil(Math.abs(preMinDeficit));
         const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
         const key = `${otType}|${sp}|${date}`;
         demandMap.set(key, effectiveDemand);
         if (!rowSet.has(otType)) rowSet.set(otType, new Set());
         rowSet.get(otType)!.add(sp);
-        // Add adjustments for the pre-shift intervals
         addAdjustments(date, pre2Start, ssi, effectiveDemand);
       }
 
       // 2hr Post Shift: check if any interval after shift has deficit below tolerance
       const post2End = Math.min(sei + 4, 48);
       const postCount = post2End - sei;
-      let postSum = 0;
+      let postMinDeficit = 0;
       let postDataCount = 0;
       let postHasDeficit = false;
       for (let i = sei; i < post2End; i++) {
         const val = intervals.get(i);
-        if (val !== undefined) { postSum += val; postDataCount++; if (val < tol) postHasDeficit = true; }
+        if (val !== undefined) { postDataCount++; if (val < postMinDeficit) postMinDeficit = val; if (val < tol) postHasDeficit = true; }
       }
       if (postDataCount > 0 && postHasDeficit) {
-        const avgDeficit = postSum / postDataCount;
-        const effectiveDemand = Math.ceil(Math.abs(avgDeficit));
+        const effectiveDemand = Math.ceil(Math.abs(postMinDeficit));
         const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
         const key = `${otType}|${sp}|${date}`;
         demandMap.set(key, effectiveDemand);
         if (!rowSet.has(otType)) rowSet.set(otType, new Set());
         rowSet.get(otType)!.add(sp);
-        // Add adjustments for the post-shift intervals
         addAdjustments(date, sei, post2End, effectiveDemand);
       }
     }
