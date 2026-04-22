@@ -575,26 +575,48 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [hasGenerated, setHasGenerated] = useState(false);
   const [tolerance, setTolerance] = useState(-2);
 
-  // Single shared OT demand computation — used by both the OTDemandTable and the heatmap
+  // Compute selected week's date range (Sunday to Saturday)
+  const weekDateRange = useMemo(() => {
+    if (!selectedWeek) return null;
+    const w = weeks.find((w: { key: string }) => w.key === selectedWeek);
+    if (!w) return null;
+    const start = `${w.start.getFullYear()}-${String(w.start.getMonth() + 1).padStart(2, '0')}-${String(w.start.getDate()).padStart(2, '0')}`;
+    const end = `${w.end.getFullYear()}-${String(w.end.getMonth() + 1).padStart(2, '0')}-${String(w.end.getDate()).padStart(2, '0')}`;
+    return { start, end };
+  }, [selectedWeek, weeks]);
+
+  // Filter heatmap to selected week only
+  const weekFilteredHeatmap = useMemo(() => {
+    if (!heatmap?.length || !weekDateRange) return heatmap || [];
+    return heatmap.filter(r => r.date >= weekDateRange.start && r.date <= weekDateRange.end);
+  }, [heatmap, weekDateRange]);
+
+  // Filter revised heatmap to selected week only
+  const weekFilteredRevised = useMemo(() => {
+    if (!revised?.length || !weekDateRange) return revised || [];
+    return revised.filter(r => r.date >= weekDateRange.start && r.date <= weekDateRange.end);
+  }, [revised, weekDateRange]);
+
+  // Single shared OT demand computation — uses week-filtered heatmap
   const otDemand = useMemo(() => {
-    if (!heatmap?.length || !shifts?.length || !selectedProgram) {
+    if (!weekFilteredHeatmap?.length || !shifts?.length || !selectedProgram) {
       return { dates: [], rows: [], demandMap: new Map<string, number>(), adjustments: new Map<string, number>() } as OTDemandResult;
     }
-    return computeOTDemand(heatmap, shifts, selectedProgram, tolerance);
-  }, [heatmap, shifts, selectedProgram, tolerance]);
+    return computeOTDemand(weekFilteredHeatmap, shifts, selectedProgram, tolerance);
+  }, [weekFilteredHeatmap, shifts, selectedProgram, tolerance]);
 
-  // Apply the demand adjustments to the heatmap
+  // Apply the demand adjustments to the week-filtered heatmap
   const demandRevisedHeatmap = useMemo(() => {
-    if (!heatmap?.length || !selectedProgram) return [];
+    if (!weekFilteredHeatmap?.length || !selectedProgram) return [];
     const { adjustments } = otDemand;
-    return heatmap.map(r => {
+    return weekFilteredHeatmap.map(r => {
       if (r.program !== selectedProgram) return r;
       const key = `${r.date}|${r.intervalStartTime}`;
       const adj = adjustments.get(key) ?? 0;
       if (adj > 0) return { ...r, overUnderValue: r.overUnderValue + adj };
       return r;
     });
-  }, [heatmap, selectedProgram, otDemand]);
+  }, [weekFilteredHeatmap, selectedProgram, otDemand]);
 
   const showMsg = (text: string, type: 'success' | 'error') => {
     setMessage(text); setMsgType(type);
@@ -772,14 +794,14 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
         </div>
       ) : (
         <>
-          {hasGenerated && selectedProgram && heatmap && heatmap.length > 0 && <OTDemandTable dates={otDemand.dates} rows={otDemand.rows} demandMap={otDemand.demandMap} animKey={generateCount} />}
-          {hasGenerated && filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} allDates={heatmap ? [...new Set(heatmap.map(r => r.date))] : undefined} />}
+          {hasGenerated && selectedProgram && weekFilteredHeatmap && weekFilteredHeatmap.length > 0 && <OTDemandTable dates={otDemand.dates} rows={otDemand.rows} demandMap={otDemand.demandMap} animKey={generateCount} />}
+          {hasGenerated && filteredSlots.length > 0 && <OTPivotTable slots={filteredSlots} shifts={shifts} animKey={generateCount} allDates={weekFilteredHeatmap ? [...new Set(weekFilteredHeatmap.map(r => r.date))] : undefined} />}
           {hasGenerated && <SlotList slots={filteredSlots} shifts={shifts} onRelease={handleRelease} onCancel={handleCancel} />}
-          {hasGenerated && heatmap && heatmap.length > 0 && (
+          {hasGenerated && weekFilteredHeatmap && weekFilteredHeatmap.length > 0 && (
             <div style={{ marginTop: '1.5rem', background: '#fff', borderRadius: 8, padding: '0.75rem', border: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.3rem', color: '#1e293b' }}>Heatmap Comparison</div>
               <ToleranceConfig value={tolerance} onChange={setTolerance} />
-              <FillRateHeatmap original={heatmap} revised={revised || []} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} selectedProgram={selectedProgram} selectedLobby={selectedLobby} />
+              <FillRateHeatmap original={weekFilteredHeatmap} revised={weekFilteredRevised} demandRevised={demandRevisedHeatmap} programs={programs} lobbies={lobbies} selectedProgram={selectedProgram} selectedLobby={selectedLobby} />
             </div>
           )}
           {!hasGenerated && (
