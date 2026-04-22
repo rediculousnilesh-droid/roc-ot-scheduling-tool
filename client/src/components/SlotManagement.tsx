@@ -575,15 +575,17 @@ export default function SlotManagement({ slots, shifts, programs, lobbies, heatm
   const [hasGenerated, setHasGenerated] = useState(false);
   const [tolerance, setTolerance] = useState(-2);
 
-  // Compute selected week's date range (Sunday to Saturday)
+  // Compute selected week's date range (Sunday to Saturday) from the selectedWeek key
   const weekDateRange = useMemo(() => {
     if (!selectedWeek) return null;
-    const w = weeks.find((w: { key: string }) => w.key === selectedWeek);
-    if (!w) return null;
-    const start = `${w.start.getFullYear()}-${String(w.start.getMonth() + 1).padStart(2, '0')}-${String(w.start.getDate()).padStart(2, '0')}`;
-    const end = `${w.end.getFullYear()}-${String(w.end.getMonth() + 1).padStart(2, '0')}-${String(w.end.getDate()).padStart(2, '0')}`;
+    // selectedWeek is a YYYY-MM-DD string representing the Sunday
+    const sun = new Date(selectedWeek + 'T12:00:00');
+    const sat = new Date(sun);
+    sat.setDate(sat.getDate() + 6);
+    const start = `${sun.getFullYear()}-${String(sun.getMonth() + 1).padStart(2, '0')}-${String(sun.getDate()).padStart(2, '0')}`;
+    const end = `${sat.getFullYear()}-${String(sat.getMonth() + 1).padStart(2, '0')}-${String(sat.getDate()).padStart(2, '0')}`;
     return { start, end };
-  }, [selectedWeek, weeks]);
+  }, [selectedWeek]);
 
   // Filter heatmap to selected week only
   const weekFilteredHeatmap = useMemo(() => {
