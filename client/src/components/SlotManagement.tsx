@@ -128,58 +128,48 @@ function computeOTDemand(heatmap: HeatmapRow[], shifts: ShiftEntry[], program: s
       const sei = intervalIdx(endStr);
       const budgetKey = `${sp}|${date}|${program}`;
 
-      // 2hr Pre Shift: compute average deficit across 4 intervals before shift
+      // 2hr Pre Shift: check if any interval before shift has deficit below tolerance
       const pre2Start = Math.max(ssi - 4, 0);
       const preCount = ssi - pre2Start;
       let preSum = 0;
       let preDataCount = 0;
+      let preHasDeficit = false;
       for (let i = pre2Start; i < ssi; i++) {
         const val = intervals.get(i);
-        if (val !== undefined) { preSum += val; preDataCount++; }
+        if (val !== undefined) { preSum += val; preDataCount++; if (val < tol) preHasDeficit = true; }
       }
-      if (preDataCount > 0) {
+      if (preDataCount > 0 && preHasDeficit) {
         const avgDeficit = preSum / preDataCount;
-        const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
-        const effectiveTol = usedBudget >= 2 ? 0 : tol;
-        if (avgDeficit < effectiveTol) {
-          const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
-          const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
-          const key = `${otType}|${sp}|${date}`;
-          demandMap.set(key, effectiveDemand);
-          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-          rowSet.get(otType)!.add(sp);
-          const tolUsed = effectiveTol !== 0 ? Math.min(preDataCount, 2 - usedBudget) : 0;
-          toleranceBudget.set(budgetKey, usedBudget + tolUsed);
-          // Add adjustments for the pre-shift intervals
-          addAdjustments(date, pre2Start, ssi, effectiveDemand);
-        }
+        const effectiveDemand = Math.ceil(Math.abs(avgDeficit));
+        const otType = preCount > 2 ? '2hr Pre Shift OT' : '1hr Pre Shift OT';
+        const key = `${otType}|${sp}|${date}`;
+        demandMap.set(key, effectiveDemand);
+        if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+        rowSet.get(otType)!.add(sp);
+        // Add adjustments for the pre-shift intervals
+        addAdjustments(date, pre2Start, ssi, effectiveDemand);
       }
 
-      // 2hr Post Shift: compute average deficit across 4 intervals after shift
+      // 2hr Post Shift: check if any interval after shift has deficit below tolerance
       const post2End = Math.min(sei + 4, 48);
       const postCount = post2End - sei;
       let postSum = 0;
       let postDataCount = 0;
+      let postHasDeficit = false;
       for (let i = sei; i < post2End; i++) {
         const val = intervals.get(i);
-        if (val !== undefined) { postSum += val; postDataCount++; }
+        if (val !== undefined) { postSum += val; postDataCount++; if (val < tol) postHasDeficit = true; }
       }
-      if (postDataCount > 0) {
+      if (postDataCount > 0 && postHasDeficit) {
         const avgDeficit = postSum / postDataCount;
-        const usedBudget = toleranceBudget.get(budgetKey) ?? 0;
-        const effectiveTol = usedBudget >= 2 ? 0 : tol;
-        if (avgDeficit < effectiveTol) {
-          const effectiveDemand = Math.ceil(Math.abs(avgDeficit - effectiveTol));
-          const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
-          const key = `${otType}|${sp}|${date}`;
-          demandMap.set(key, effectiveDemand);
-          if (!rowSet.has(otType)) rowSet.set(otType, new Set());
-          rowSet.get(otType)!.add(sp);
-          const tolUsed = effectiveTol !== 0 ? Math.min(postDataCount, 2 - usedBudget) : 0;
-          toleranceBudget.set(budgetKey, usedBudget + tolUsed);
-          // Add adjustments for the post-shift intervals
-          addAdjustments(date, sei, post2End, effectiveDemand);
-        }
+        const effectiveDemand = Math.ceil(Math.abs(avgDeficit));
+        const otType = postCount > 2 ? '2hr Post Shift OT' : '1hr Post Shift OT';
+        const key = `${otType}|${sp}|${date}`;
+        demandMap.set(key, effectiveDemand);
+        if (!rowSet.has(otType)) rowSet.set(otType, new Set());
+        rowSet.get(otType)!.add(sp);
+        // Add adjustments for the post-shift intervals
+        addAdjustments(date, sei, post2End, effectiveDemand);
       }
     }
 
